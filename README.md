@@ -37,8 +37,9 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 3. Here: `projects/<project>/project.yaml`, and `release.yaml` with a line per environment, `null` until
    it has an image. Merging creates the Dokploy project, environments, vault providers, and each
    environment's app and volumes, not deployed. Setting an environment's image deploys it (its volumes
-   are already attached). `release.yaml` is required, with every environment, and `null` never deletes
-   an app.
+   are already attached). `release.yaml` is required, with every environment. `null` means "not
+   deployed yet" only: once an environment has had an image, `check` rejects setting it back to `null`
+   (roll back by setting a previous image).
 
 ## Rules
 

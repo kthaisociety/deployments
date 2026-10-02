@@ -43,6 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the base branch's release.yaml files, for the null check below
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
@@ -80,6 +81,27 @@ jobs:
               img=$(E="$e" yq -r '.[strenv(E)]' "$r")
               grep -qxE 'ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' <<<"$img" || { echo "::error file=projects/$r::$e: '$img' isn't <image>:<tag>@sha256:<digest> (or null)"; ok=false; }
             done < <(yq -r '.environments | keys | .[]' "$f")
+          done
+          $ok
+      # null means "not deployed yet", and only that: once an environment has had an image, setting it
+      # back to null would leave the app pointing at the never-deployed placeholder, and its next
+      # redeploy would fail. Roll back by setting a previous image instead.
+      - name: release.yaml never goes back to null
+        if: github.event_name == 'pull_request'
+        working-directory: projects
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          ok=true
+          for r in */release.yaml; do
+            base=$(git show "$BASE:projects/$r" 2>/dev/null) || continue
+            while IFS= read -r e; do
+              was=$(E="$e" yq -r '.[strenv(E)] // ""' <<<"$base")
+              [ -z "$was" ] && continue
+              if [ "$(E="$e" yq -r '.[strenv(E)] | tag' "$r")" = '!!null' ]; then
+                echo "::error file=projects/$r::$e was deployed ($was); it can't go back to null. To roll back, set a previous image (git log -p projects/$r)."; ok=false
+              fi
+            done < <(yq -r 'keys | .[]' <<<"$base")
           done
           $ok
       # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
