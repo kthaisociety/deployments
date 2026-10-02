@@ -1,0 +1,29 @@
+# onboarding-service: creates and removes members' Google Workspace and Mattermost accounts. Internal only
+# (no domain): landingpage-backend and the frontend call it through ONBOARDING_SERVICE_URL.
+# Migration from the UI-managed app: kthaisociety/infrastructure, docs/onboarding-service-migration.md.
+repo: kthaisociety/onboarding-service
+
+# For every environment unless it says otherwise.
+defaults:
+  env:
+    BACKEND_URL: http://kthaisbackend-backend-hzwlri:8080/api/v1
+    PORTAL_BASE_URL: https://kthais.com/onboarding
+    MATTERMOST_URL: https://chat.aisociety.se
+    GOOGLE_ADMIN_IMPERSONATE_AS: onboarding-automation@kthais.com
+    GIN_MODE: release
+  # Names only. Values in OpenBao at secret/onboarding-service/<environment>.
+  secrets:
+    - MATTERMOST_BOT_TOKEN
+    - GOOGLE_ADMIN_SERVICE_ACCOUNT_JSON
+  # secret/shared/onboarding-service-secret/<environment>, also read by landingpage-backend.
+  shared:
+    onboarding-service-secret: [ONBOARDING_SERVICE_SECRET]
+  # SQLite.
+  volumes:
+    /data: data
+
+environments:
+  # Its secrets are inert (a service account JSON with no real key, a dummy Mattermost token, its own
+  # shared secret): it starts and resolves every reference, and can't touch a real account.
+  staging: {}
+  production: {}
