@@ -206,7 +206,13 @@ jobs:
             # kthais-deploy.
             if sha=$(GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/merge" \
                 -f merge_method=squash --jq .sha 2> /tmp/merge.err); then
-              GH_TOKEN=$APP_TOKEN gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)" >/dev/null 2>&1 || true
+              # The repo deletes merged branches itself; delete it here too, and only warn if it's still
+              # there afterwards (a delete of an already deleted branch fails harmlessly).
+              head=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
+              GH_TOKEN=$APP_TOKEN gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$head" >/dev/null 2>&1 || true
+              if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$head" >/dev/null 2>&1; then
+                echo "::warning::Merged, but couldn't delete the branch $head: delete it by hand."
+              fi
               echo "sha=$sha" >> "$GITHUB_OUTPUT"
               echo "Merged as $sha" >> "$GITHUB_STEP_SUMMARY"
               exit 0
