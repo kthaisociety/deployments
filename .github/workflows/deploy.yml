@@ -5,8 +5,8 @@
 #  1. Validate the inputs; the project and environment must exist here.
 #  2. Resolve the tag's digest from GHCR. The caller never names bytes, so it can't pair an approved tag
 #     with other ones.
-#  3. Production: the tag must be X.Y.Z, the project's repo must have the GitHub Release vX.Y.Z (or
-#     <repo>-vX.Y.Z), and the digest must be the one built from the commit it points to (sha-<7>).
+#  3. Production: the tag must be X.Y.Z, the project's repo must have the GitHub Release vX.Y.Z, and the
+#     digest must be the one built from the commit it points to (sha-<7>).
 #  4. Commit the one line to release.yaml on main, as kthais-deploy, through GitHub's API (so GitHub signs
 #     it). Unless it's already there. Only this workflow changes release.yaml.
 #  5. Apply main, here, and end with the result. If, at the applied commit, the line is a newer one, a
@@ -104,14 +104,9 @@ jobs:
 
           if [ "$ENVIRONMENT" = production ]; then
             grep -qxE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$TAG" || fail "production only takes releases (X.Y.Z), not $TAG"
-            # release-please tags vX.Y.Z, or <component>-vX.Y.Z when the package has a name (onboarding-service:
-            # onboarding-service-v1.0.0). Either is a release.
-            release_tag=""
-            for t in "v$TAG" "${repo#*/}-v$TAG"; do
-              if gh api "repos/$repo/releases/tags/$t" --jq .tag_name >/dev/null 2>&1; then release_tag=$t; break; fi
-            done
-            [ -n "$release_tag" ] || fail "$repo has no GitHub Release v$TAG (or ${repo#*/}-v$TAG)"
-            commit=$(gh api "repos/$repo/commits/$release_tag" --jq .sha) || fail "can't resolve $release_tag in $repo"
+            # Releases are tagged vX.Y.Z (release-please with include-component-in-tag: false).
+            gh api "repos/$repo/releases/tags/v$TAG" --jq .tag_name >/dev/null 2>&1 || fail "$repo has no GitHub Release v$TAG"
+            commit=$(gh api "repos/$repo/commits/v$TAG" --jq .sha) || fail "can't resolve v$TAG in $repo"
             built=$(digest_of "sha-${commit::7}")
             [ "$built" = "$digest" ] || fail "$image:$TAG is $digest, but the release commit ${commit::7} was built as ${built:-nothing}"
           fi
