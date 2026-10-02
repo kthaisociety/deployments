@@ -118,8 +118,9 @@ jobs:
             fi
           done <<<"$added"
           $ok
-      # deploy.yml's project dropdown is a fixed list: it must name every project folder.
-      - name: every project is in deploy.yml's dropdown
+      # deploy.yml's project dropdown is a fixed list: it must name exactly the project folders, no more,
+      # no less (a removed or renamed project must leave the list too).
+      - name: deploy.yml's dropdown matches the projects
         run: |
           listed=$(yq -r '.on.workflow_dispatch.inputs.project.options[]' .github/workflows/deploy.yml)
           ok=true
@@ -127,6 +128,10 @@ jobs:
             p=$(basename "$d")
             grep -qxF "$p" <<<"$listed" || { echo "::error file=.github/workflows/deploy.yml::project '$p' is missing from the deploy workflow's project options. Add it there."; ok=false; }
           done
+          while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            [ -f "projects/$p/project.yaml" ] || { echo "::error file=.github/workflows/deploy.yml::the deploy workflow lists '$p', which has no projects/$p/project.yaml. Remove it from the options."; ok=false; }
+          done <<<"$listed"
           $ok
       # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
       # can't write policies). Fail early, with the line to add, if a project or environment isn't there.
