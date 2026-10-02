@@ -1,0 +1,3 @@
+# Code owners approve every human PR. The deployments bot's release.yaml PRs bypass the approval rule
+# (never the checks); see README.md.
+* @kthaisociety/it-team

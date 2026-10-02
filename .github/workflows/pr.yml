@@ -1,0 +1,15 @@
+# Checks on every PR. `title` is a required check on main.
+name: pr
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  # PRs are squash-merged, so the title becomes the commit on main.
+  title:
+    uses: kthaisociety/workflows/.github/workflows/semantic-pr.yml@v0.1.0
+    permissions:
+      pull-requests: read
