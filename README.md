@@ -59,4 +59,6 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 `deploy.yml` looks up the tag's digest in GHCR itself, and for production requires a GitHub Release whose
 commit was built as exactly that digest. It changes the one line through a PR by `kthais-deploy`, which
 must pass the same required checks as any PR (plus `bot-scope`: exactly one `release.yaml`) and only
-skips human review. Then it waits for the apply. One deploy at a time.
+skips human review. It reports success only once a `tofu` run on `main` has actually applied a commit
+containing the line (starting one if needed). Requests can run concurrently: each is its own PR, and
+applies run one at a time.
