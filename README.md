@@ -21,7 +21,7 @@ terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
 .github/workflows/
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
-  deploy.yml      # deploy requests from app repos: check, bot PR on release.yaml, apply [to do]
+  deploy.yml      # deploy requests from app repos: check, bot PR on release.yaml, merge, wait for the apply
 ```
 
 A project's OpenBao side (its policies and empty secret paths) lives in
@@ -47,3 +47,16 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 - Humans' PRs need a code owner's approval. The deployments bot's PRs skip that approval, never the
   checks, and may only change `projects/*/release.yaml` (`bot-scope`).
 - Public by design: no secret value is ever in this repo. Values live in OpenBao.
+
+## Deploying
+
+- **Automatically**, from an app repo that has opted in (a `request-deploy` job in its `build.yml` for
+  staging, in its `release.yml` for production): its CI starts `deploy.yml` here with the project,
+  environment and tag, and waits for the result.
+- **By hand**: Actions → deploy → Run workflow, with the project, environment, tag (`sha-<7>` or
+  `X.Y.Z`) and any request id. Or a PR changing the `release.yaml` line yourself.
+
+`deploy.yml` looks up the tag's digest in GHCR itself, and for production requires a GitHub Release whose
+commit was built as exactly that digest. It changes the one line through a PR by `kthais-deploy`, which
+must pass the same required checks as any PR (plus `bot-scope`: exactly one `release.yaml`) and only
+skips human review. Then it waits for the apply. One deploy at a time.

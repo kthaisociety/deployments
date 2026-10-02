@@ -1,0 +1,225 @@
+# A deploy request: put a project environment on an image tag, checked, through a PR, and applied.
+# Started by app repos (kthaisociety/workflows' request-deploy.yml, with the kthais-dispatch App) or by
+# hand. One request is one run, start to finish: its result is the deploy's result.
+#
+#  1. Validate the inputs.
+#  2. The project and environment must exist here (project.yaml, release.yaml).
+#  3. Resolve the tag's digest from GHCR. The caller never names bytes, so it can't pair an approved tag
+#     with other ones.
+#  4. Production: the tag must be X.Y.Z, the project's repo must have the GitHub Release vX.Y.Z, and the
+#     digest must be the one built from the commit vX.Y.Z points to (sha-<7>).
+#  5. If release.yaml already says exactly this, done.
+#  6. With kthais-deploy: a branch, a one-line commit to release.yaml (made through the API, so GitHub
+#     signs it), a PR. Its required checks run like any PR's; bot-scope limits it to that one file.
+#  7. When those checks pass, kthais-deploy merges it (it bypasses only the human review ruleset).
+#  8. Wait for the apply of the merge commit, and end with its result.
+name: deploy
+run-name: deploy ${{ inputs.project }} ${{ inputs.environment }} ${{ inputs.tag }} [${{ inputs.request_id }}]
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Project, as in projects/<project>/.
+        required: true
+        type: string
+      environment:
+        description: Environment, e.g. staging or production.
+        required: true
+        type: string
+      tag:
+        description: Image tag, sha-<7> (staging) or X.Y.Z (a release).
+        required: true
+        type: string
+      request_id:
+        description: The caller's id for this request, so it can find this run. Any value when run by hand.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One deploy at a time: each one edits release.yaml on main, and main must be up to date to merge.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PROJECT: ${{ inputs.project }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      TAG: ${{ inputs.tag }}
+      REQUEST_ID: ${{ inputs.request_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Validate the request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          grep -qxE '[a-z0-9]+(-[a-z0-9]+)*' <<<"$PROJECT" || fail "project '$PROJECT': not a project name"
+          grep -qxE '[a-z0-9]+' <<<"$ENVIRONMENT" || fail "environment '$ENVIRONMENT': not an environment name"
+          grep -qxE 'sha-[0-9a-f]{7}|[0-9]+\.[0-9]+\.[0-9]+' <<<"$TAG" || fail "tag '$TAG': must be sha-<7 hex> or X.Y.Z"
+          grep -qxE '[A-Za-z0-9._-]{1,64}' <<<"$REQUEST_ID" || fail "request_id: 1-64 letters, digits, . _ -"
+
+          p="projects/$PROJECT/project.yaml"; r="projects/$PROJECT/release.yaml"
+          [ -f "$p" ] || fail "no project '$PROJECT' here (projects/$PROJECT/project.yaml)"
+          [ "$(E="$ENVIRONMENT" yq -r '.environments | has(strenv(E))' "$p")" = true ] || fail "$PROJECT has no environment '$ENVIRONMENT'"
+          [ "$(E="$ENVIRONMENT" yq -r 'has(strenv(E))' "$r")" = true ] || fail "$r has no line for '$ENVIRONMENT'"
+
+          repo=$(yq -r '.repo' "$p")
+          image=$(yq -r ".image // \"ghcr.io/$repo\"" "$p" | tr '[:upper:]' '[:lower:]')
+          path=${image#ghcr.io/}
+
+          # GHCR, anonymously: the images are public. HEAD the tag, read its digest.
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:$path:pull" | jq -r .token)
+          digest_of() {
+            curl -sS -o /dev/null -D - -I -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/$path/manifests/$1" | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:" {print $2}'
+          }
+          digest=$(digest_of "$TAG")
+          grep -qxE 'sha256:[0-9a-f]{64}' <<<"$digest" || fail "$image:$TAG not found in GHCR"
+
+          if [ "$ENVIRONMENT" = production ]; then
+            grep -qxE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$TAG" || fail "production only takes releases (X.Y.Z), not $TAG"
+            gh api "repos/$repo/releases/tags/v$TAG" --jq .tag_name >/dev/null 2>&1 || fail "$repo has no GitHub Release v$TAG"
+            commit=$(gh api "repos/$repo/commits/v$TAG" --jq .sha) || fail "can't resolve v$TAG in $repo"
+            built=$(digest_of "sha-${commit::7}")
+            [ "$built" = "$digest" ] || fail "$image:$TAG is $digest, but the release commit ${commit::7} was built as ${built:-nothing}"
+          fi
+
+          line="$image:$TAG@$digest"
+          current=$(E="$ENVIRONMENT" yq -r '.[strenv(E)] // ""' "$r")
+          {
+            echo "line=$line"
+            echo "file=$r"
+            echo "unchanged=$([ "$current" = "$line" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Request OK: $PROJECT $ENVIRONMENT → \`$line\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Already deployed
+        if: steps.request.outputs.unchanged == 'true'
+        run: |
+          echo "release.yaml already has this image for $PROJECT $ENVIRONMENT: nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        if: steps.request.outputs.unchanged != 'true'
+        id: app
+        with:
+          client-id: ${{ secrets.DEPLOY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          repositories: deployments
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open the PR
+        if: steps.request.outputs.unchanged != 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          LINE: ${{ steps.request.outputs.line }}
+          FILE: ${{ steps.request.outputs.file }}
+        run: |
+          branch="deploy/$PROJECT-$ENVIRONMENT-$REQUEST_ID"
+          title="chore(deploy): $PROJECT $ENVIRONMENT $TAG"
+          base=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$base" >/dev/null
+
+          # Only the one line changes; the rest of the file stays as it is on main.
+          git show "$base:$FILE" > /tmp/release.yaml
+          E="$ENVIRONMENT" L="$LINE" yq -i '.[strenv(E)] = strenv(L)' /tmp/release.yaml
+          blob=$(gh api "repos/$GITHUB_REPOSITORY/contents/$FILE?ref=$base" --jq .sha)
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/$FILE" \
+            -f message="$title" -f branch="$branch" -f sha="$blob" \
+            -f content="$(base64 -w0 /tmp/release.yaml)" >/dev/null
+
+          url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" --title "$title" \
+            --body "Deploy request \`$REQUEST_ID\` ([run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)): \`$PROJECT\` \`$ENVIRONMENT\` → \`$LINE\`. Opened and merged by deploy.yml once its checks pass.")
+          echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "PR: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for its checks, merge
+        if: steps.request.outputs.unchanged != 'true'
+        id: merge
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          # The checks no one bypasses (the "main: checks" ruleset). Greptile and approval belong to the
+          # review ruleset, which kthais-deploy bypasses.
+          required=("title / PR title is a Conventional Commit" "check" "bot-scope")
+          give_up() {
+            echo "::error::$1"
+            gh pr close "$PR" --repo "$GITHUB_REPOSITORY" --delete-branch --comment "deploy.yml: $1" || true
+            exit 1
+          }
+          wait_checks() {
+            local deadline=$((SECONDS + 1200)) sha state
+            while :; do
+              sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+              state=ok
+              for name in "${required[@]}"; do
+                c=$(N="$name" gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?per_page=100" \
+                  --jq '[.check_runs[] | select(.name == env.N)] | sort_by(.started_at) | last | (.status + " " + (.conclusion // ""))')
+                case "$c" in
+                  "completed success") ;;
+                  completed*) give_up "check '$name' failed on the deploy PR" ;;
+                  *) state=pending ;;
+                esac
+              done
+              [ "$state" = ok ] && return 0
+              [ "$SECONDS" -ge "$deadline" ] && give_up "the deploy PR's checks didn't finish within 20 minutes"
+              sleep 10
+            done
+          }
+          for _ in 1 2 3; do
+            wait_checks
+            if gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch; then
+              sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json mergeCommit -q .mergeCommit.oid)
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              echo "Merged as $sha" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            # main moved (a human merge): bring the branch up to date, and its checks run again.
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/update-branch" >/dev/null || true
+            sleep 15
+          done
+          give_up "couldn't merge the deploy PR after 3 attempts"
+
+      - name: Wait for the apply
+        if: steps.request.outputs.unchanged != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.merge.outputs.sha }}
+        run: |
+          deadline=$((SECONDS + 1800))
+          while :; do
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/tofu.yml/runs?head_sha=$SHA&event=push&per_page=1" \
+              --jq '.workflow_runs[0] // empty | [.status, (.conclusion // "-"), .html_url] | @tsv')
+            if [ -n "$run" ]; then
+              IFS=$'\t' read -r status conclusion url <<<"$run"
+              if [ "$status" = completed ]; then
+                echo "Apply: $conclusion, $url" >> "$GITHUB_STEP_SUMMARY"
+                [ "$conclusion" = success ] && exit 0
+                echo "::error::the apply of $SHA ended with '$conclusion': $url"
+                exit 1
+              fi
+            fi
+            [ "$SECONDS" -ge "$deadline" ] && { echo "::error::no finished apply for $SHA after 30 minutes"; exit 1; }
+            sleep 15
+          done

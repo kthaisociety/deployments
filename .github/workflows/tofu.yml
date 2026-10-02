@@ -134,7 +134,9 @@ jobs:
           $ok
 
   plan:
-    if: github.event_name == 'pull_request'
+    # Not for the deploy bot's PRs: they only change an image line (bot-scope), and a plan here waits for a
+    # reviewer, which would stall every deploy. The apply on main still plans first.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'kthais-deploy[bot]'
     needs: check
     runs-on: ubuntu-latest
     # Holds the same secrets as production. Its required reviewers gate them: approving a run executes
