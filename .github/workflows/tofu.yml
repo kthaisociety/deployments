@@ -228,5 +228,7 @@ jobs:
           echo "TF_VAR_openbao_jwt=$JWT" >> "$GITHUB_ENV"
       - run: tofu init
         if: steps.tip.outputs.current == 'true'
-      - run: tofu apply -auto-approve
+      # deploy.yml looks for this step by name: it ran and succeeded = the commit was applied.
+      - name: tofu apply
+        run: tofu apply -auto-approve
         if: steps.tip.outputs.current == 'true'
