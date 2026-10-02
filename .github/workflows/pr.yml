@@ -13,28 +13,3 @@ jobs:
     uses: kthaisociety/workflows/.github/workflows/semantic-pr.yml@v0.1.0
     permissions:
       pull-requests: read
-
-  # The deploy bot's PRs skip human review, so they may do exactly one thing: change one project's
-  # release.yaml. Passes for everyone else. A required check on main.
-  bot-scope:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-    steps:
-      - name: kthais-deploy only changes one release.yaml
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          if [ "$AUTHOR" != "kthais-deploy[bot]" ]; then
-            echo "Not a deploy bot PR ($AUTHOR): nothing to check."
-            exit 0
-          fi
-          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
-            --jq '.[] | .filename, (.previous_filename // empty)')
-          echo "$files"
-          if [ "$(grep -c . <<<"$files")" -ne 1 ] || ! grep -qxE 'projects/[a-z0-9]+(-[a-z0-9]+)*/release\.yaml' <<<"$files"; then
-            echo "::error::A kthais-deploy PR may change exactly one projects/<project>/release.yaml, nothing else."
-            exit 1
-          fi

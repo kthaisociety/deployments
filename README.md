@@ -21,7 +21,7 @@ terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
 .github/workflows/
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
-  deploy.yml      # deploy requests from app repos: check, bot PR on release.yaml, merge, wait for the apply
+  deploy.yml      # deploy requests: validate, commit the release.yaml line, apply, report (one run)
 ```
 
 A project's OpenBao side (its policies and empty secret paths) lives in
@@ -43,9 +43,9 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 
 ## Rules
 
-- Everything changes by PR, squash-merged, with a Conventional Commit title.
-- Humans' PRs need a code owner's approval. The deployments bot's PRs skip that approval, never the
-  checks, and may only change `projects/*/release.yaml` (`bot-scope`).
+- Everything changes by PR, squash-merged, with a Conventional Commit title, and a code owner's approval.
+- Except `release.yaml`: only the deploy workflow changes it (it commits the line to `main` as
+  `kthais-deploy` and applies in the same run). PRs that edit an existing `release.yaml` fail `check`.
 - Public by design: no secret value is ever in this repo. Values live in OpenBao.
 
 ## Deploying
@@ -54,11 +54,14 @@ policies decide what a token can read, so this repo's CI can't write them. It on
   staging, in its `release.yml` for production): its CI starts `deploy.yml` here with the project,
   environment and tag, and waits for the result.
 - **By hand**: Actions → deploy → Run workflow, with the project, environment, tag (`sha-<7>` or
-  `X.Y.Z`) and any request id. Or a PR changing the `release.yaml` line yourself.
+  `X.Y.Z`) and any request id. **Rolling back is the same**, with a previous tag.
 
-`deploy.yml` looks up the tag's digest in GHCR itself, and for production requires a GitHub Release whose
-commit was built as exactly that digest. It changes the one line through a PR by `kthais-deploy`, which
-must pass the same required checks as any PR (plus `bot-scope`: exactly one `release.yaml`) and only
-skips human review. It reports success only once a `tofu` run on `main` has actually applied a commit
-containing the line (starting one if needed). Requests can run concurrently: each is its own PR, and
-applies run one at a time.
+One run does the whole deploy:
+1. Validate the request, and look up the tag's digest in GHCR. For production: the tag must be a
+   release (`X.Y.Z` with a GitHub Release), built from the release commit.
+2. Commit the one `release.yaml` line to `main` as `kthais-deploy` (signed by GitHub), unless it's already
+   there.
+3. `tofu apply` `main`, in the same run, and report the result.
+
+Applies (deploys and `tofu` runs) go one at a time. If two more requests arrive while one runs, the older
+waiting one is cancelled by GitHub; its caller sees "cancelled" and can re-run it.
