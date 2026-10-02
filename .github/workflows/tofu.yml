@@ -56,22 +56,23 @@ jobs:
       - name: project and environment names, release images
         working-directory: projects
         run: |
+          # Line by line, never word-split: a name like "my app" must fail as a whole.
           ok=true
           for f in */project.yaml; do
             p=${f%/project.yaml}
             if ! grep -qxE '[a-z0-9]+(-[a-z0-9]+)*' <<<"$p" || [ "$p" = infrastructure ] || [ "$p" = shared ]; then
               echo "::error file=projects/$f::project name '$p': lowercase letters, digits and single hyphens; not infrastructure or shared"; ok=false
             fi
-            for e in $(yq -r '.environments | keys | .[]' "$f"); do
+            while IFS= read -r e; do
               grep -qxE '[a-z0-9]+' <<<"$e" || { echo "::error file=projects/$f::environment '$e': lowercase letters and digits only"; ok=false; }
-            done
+            done < <(yq -r '.environments | keys | .[]' "$f")
             r="$p/release.yaml"
             [ -f "$r" ] || continue
-            for e in $(yq -r 'keys | .[]' "$r"); do
-              img=$(yq -r ".\"$e\" // \"\"" "$r")
+            while IFS= read -r e; do
+              img=$(E="$e" yq -r '.[strenv(E)] // ""' "$r")
               [ -z "$img" ] && continue
               grep -qxE 'ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' <<<"$img" || { echo "::error file=projects/$r::$e: '$img' isn't <image>:<tag>@sha256:<digest>"; ok=false; }
-            done
+            done < <(yq -r 'keys | .[]' "$r")
           done
           $ok
       # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
@@ -79,21 +80,24 @@ jobs:
       - name: listed in infrastructure's projects.yaml
         working-directory: projects
         run: |
-          curl -sSf -o /tmp/infra-projects.yaml \
-            https://raw.githubusercontent.com/kthaisociety/infrastructure/main/terraform/openbao/projects.yaml
+          url=https://raw.githubusercontent.com/kthaisociety/infrastructure/main/terraform/openbao/projects.yaml
+          if ! curl -sSf -o /tmp/infra-projects.yaml "$url"; then
+            echo "::error::Couldn't read $url. Every project needs a line there (its OpenBao policies); if the file is new, the infrastructure PR adding it isn't merged yet."
+            exit 1
+          fi
           ok=true
           for f in */project.yaml; do
             p=${f%/project.yaml}
-            if [ "$(yq -r "has(\"$p\")" /tmp/infra-projects.yaml)" != true ]; then
+            if [ "$(P="$p" yq -r 'has(strenv(P))' /tmp/infra-projects.yaml)" != true ]; then
               envs=$(yq -r '.environments | keys | join(", ")' "$f")
               echo "::error file=projects/$f::$p isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml, so it has no OpenBao policies. Add (via a PR there):  $p: {}   (gives staging and production; this project has: $envs)"
               ok=false
               continue
             fi
-            listed=$(yq -r ".\"$p\".environments // [\"staging\", \"production\"] | .[]" /tmp/infra-projects.yaml)
-            for e in $(yq -r '.environments | keys | .[]' "$f"); do
-              grep -qx "$e" <<<"$listed" || { echo "::error file=projects/$f::$p's environment '$e' isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml. Add it to $p's environments there."; ok=false; }
-            done
+            listed=$(P="$p" yq -r '.[strenv(P)].environments // ["staging", "production"] | .[]' /tmp/infra-projects.yaml)
+            while IFS= read -r e; do
+              grep -qxF "$e" <<<"$listed" || { echo "::error file=projects/$f::$p's environment '$e' isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml. Add it to $p's environments there."; ok=false; }
+            done < <(yq -r '.environments | keys | .[]' "$f")
           done
           $ok
 
