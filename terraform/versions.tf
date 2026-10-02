@@ -64,7 +64,8 @@ provider "vault" {
   }
 }
 
-# Reads DOKPLOY_API_KEY: the key of the Dokploy member "Deployments CI" (ops+dokploy-deployments@kthais.com).
+# Reads DOKPLOY_API_KEY: the key of the Dokploy user "Deployments CI" (ops+dokploy-deployments@kthais.com),
+# an admin: members can't use vault providers, and custom roles need a paid license.
 provider "dokploy" {
   endpoint = "https://synapse.aisociety.se"
 }
