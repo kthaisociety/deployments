@@ -161,6 +161,7 @@ jobs:
             --body "Deploy request \`$REQUEST_ID\` ([run]($GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID)): \`$PROJECT\` \`$ENVIRONMENT\` → \`$LINE\`. Opened and merged by deploy.yml once its checks pass.")
           trap - ERR
           echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "PR: $url" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for its checks, merge
@@ -170,6 +171,7 @@ jobs:
           APP_TOKEN: ${{ steps.app.outputs.token }}
           GH_TOKEN: ${{ github.token }} # reads (checks: read); merging uses APP_TOKEN
           PR: ${{ steps.pr.outputs.number }}
+          HEAD_BRANCH: ${{ steps.pr.outputs.branch }} # created by the previous step: no lookup that can fail
         run: |
           # The checks no one bypasses (the "main: checks" ruleset). Greptile and approval belong to the
           # review ruleset, which kthais-deploy bypasses.
@@ -198,8 +200,6 @@ jobs:
               sleep 10
             done
           }
-          # Known before merging, while the PR is open.
-          HEAD_BRANCH=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
           for _ in 1 2 3 4 5 6 7 8 9 10; do
             wait_checks
             # GitHub's merge API, not `gh pr merge`: gh refuses client-side while the PR shows "review
