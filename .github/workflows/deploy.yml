@@ -198,6 +198,8 @@ jobs:
               sleep 10
             done
           }
+          # Known before merging, while the PR is open.
+          HEAD_BRANCH=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
           for _ in 1 2 3 4 5 6 7 8 9 10; do
             wait_checks
             # GitHub's merge API, not `gh pr merge`: gh refuses client-side while the PR shows "review
@@ -206,15 +208,18 @@ jobs:
             # kthais-deploy.
             if sha=$(GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/merge" \
                 -f merge_method=squash --jq .sha 2> /tmp/merge.err); then
-              # The repo deletes merged branches itself; delete it here too, and only warn if it's still
-              # there afterwards (a delete of an already deleted branch fails harmlessly).
-              head=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
-              GH_TOKEN=$APP_TOKEN gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$head" >/dev/null 2>&1 || true
-              if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$head" >/dev/null 2>&1; then
-                echo "::warning::Merged, but couldn't delete the branch $head: delete it by hand."
-              fi
+              # Record the merge first: everything after it is best-effort and must never fail this step,
+              # or the run would skip waiting for the apply of a change that is already merged.
               echo "sha=$sha" >> "$GITHUB_OUTPUT"
               echo "Merged as $sha" >> "$GITHUB_STEP_SUMMARY"
+              # The repo deletes merged branches itself; delete it here too, and only warn if it's still
+              # there afterwards (a delete of an already deleted branch fails harmlessly).
+              {
+                GH_TOKEN=$APP_TOKEN gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$HEAD_BRANCH" >/dev/null 2>&1 || true
+                if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$HEAD_BRANCH" >/dev/null 2>&1; then
+                  echo "::warning::Merged, but couldn't delete the branch $HEAD_BRANCH: delete it by hand."
+                fi
+              } || true
               exit 0
             fi
             echo "Merge refused: $(cat /tmp/merge.err)"
