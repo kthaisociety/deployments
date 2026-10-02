@@ -161,6 +161,7 @@ jobs:
             --body "Deploy request \`$REQUEST_ID\` ([run]($GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID)): \`$PROJECT\` \`$ENVIRONMENT\` → \`$LINE\`. Opened and merged by deploy.yml once its checks pass.")
           trap - ERR
           echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "PR: $url" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for its checks, merge
@@ -170,6 +171,7 @@ jobs:
           APP_TOKEN: ${{ steps.app.outputs.token }}
           GH_TOKEN: ${{ github.token }} # reads (checks: read); merging uses APP_TOKEN
           PR: ${{ steps.pr.outputs.number }}
+          HEAD_BRANCH: ${{ steps.pr.outputs.branch }} # created by the previous step: no lookup that can fail
         run: |
           # The checks no one bypasses (the "main: checks" ruleset). Greptile and approval belong to the
           # review ruleset, which kthais-deploy bypasses.
@@ -200,12 +202,27 @@ jobs:
           }
           for _ in 1 2 3 4 5 6 7 8 9 10; do
             wait_checks
-            if GH_TOKEN=$APP_TOKEN gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch; then
-              sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json mergeCommit -q .mergeCommit.oid)
+            # GitHub's merge API, not `gh pr merge`: gh refuses client-side while the PR shows "review
+            # required" (it wants --admin), so kthais-deploy's ruleset bypass would never be used. The API
+            # applies the rulesets itself: required checks for everyone, the review rule bypassed by
+            # kthais-deploy.
+            if sha=$(GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/merge" \
+                -f merge_method=squash --jq .sha 2> /tmp/merge.err); then
+              # Record the merge first: everything after it is best-effort and must never fail this step,
+              # or the run would skip waiting for the apply of a change that is already merged.
               echo "sha=$sha" >> "$GITHUB_OUTPUT"
               echo "Merged as $sha" >> "$GITHUB_STEP_SUMMARY"
+              # The repo deletes merged branches itself; delete it here too, and only warn if it's still
+              # there afterwards (a delete of an already deleted branch fails harmlessly).
+              {
+                GH_TOKEN=$APP_TOKEN gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$HEAD_BRANCH" >/dev/null 2>&1 || true
+                if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$HEAD_BRANCH" >/dev/null 2>&1; then
+                  echo "::warning::Merged, but couldn't delete the branch $HEAD_BRANCH: delete it by hand."
+                fi
+              } || true
               exit 0
             fi
+            echo "Merge refused: $(cat /tmp/merge.err)"
             # main moved (another deploy or a human merge): bring the branch up to date; its checks run again.
             GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/update-branch" >/dev/null || true
             sleep 20
