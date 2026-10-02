@@ -1,0 +1,230 @@
+# OpenTofu for every project: checks on PRs, a plan on PRs (after a reviewer approves the run, in the
+# `plan` environment), and the apply on main, weekly (renews the provider tokens) and by hand.
+name: tofu
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "projects/**"
+      - ".github/workflows/tofu.yml"
+  # Renews every provider token even when nothing changes. Unrenewed, they expire 32 days after the
+  # last apply, and every deploy that resolves secrets fails.
+  schedule:
+    - cron: "37 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Applies: one at a time (no state locking on GleSYS). PRs: one group per PR, so they never wait
+  # behind an apply or cancel each other; a new push cancels that PR's older run.
+  group: ${{ github.event_name == 'pull_request' && format('tofu-pr-{0}', github.event.pull_request.number) || 'tofu-apply' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # -o pipefail, so `tofu plan | tee` fails when tofu fails.
+    shell: bash
+
+env:
+  TOFU_VERSION: 1.12.6
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  # No secrets. A required check on main.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the base branch's release.yaml files, for the null check below
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - run: tofu fmt -check -recursive terraform
+      - run: tofu init -backend=false
+        working-directory: terraform
+      - run: tofu validate
+        working-directory: terraform
+      # modules/project checks these too, but only in a plan, which needs a reviewer.
+      - name: project and environment names, release images
+        working-directory: projects
+        run: |
+          # Line by line, never word-split: a name like "my app" must fail as a whole.
+          ok=true
+          for f in */project.yaml; do
+            p=${f%/project.yaml}
+            if ! grep -qxE '[a-z0-9]+(-[a-z0-9]+)*' <<<"$p" || [ "$p" = infrastructure ] || [ "$p" = shared ]; then
+              echo "::error file=projects/$f::project name '$p': lowercase letters, digits and single hyphens; not infrastructure or shared"; ok=false
+            fi
+            while IFS= read -r e; do
+              grep -qxE '[a-z0-9]+' <<<"$e" || { echo "::error file=projects/$f::environment '$e': lowercase letters and digits only"; ok=false; }
+            done < <(yq -r '.environments | keys | .[]' "$f")
+            # release.yaml: required, with a line for every environment (a missing file or line must
+            # never read as "nothing deployed"); each value null or <image>:<tag>@sha256:<digest>.
+            r="$p/release.yaml"
+            if [ ! -f "$r" ]; then
+              echo "::error file=projects/$f::$p has no release.yaml. Add one with every environment set to null."; ok=false; continue
+            fi
+            while IFS= read -r e; do
+              if [ "$(E="$e" yq -r 'has(strenv(E))' "$r")" != true ]; then
+                echo "::error file=projects/$r::no line for environment '$e'. Add '$e: null' (not deployed yet) or its image."; ok=false; continue
+              fi
+              [ "$(E="$e" yq -r '.[strenv(E)] | tag' "$r")" = '!!null' ] && continue
+              img=$(E="$e" yq -r '.[strenv(E)]' "$r")
+              grep -qxE 'ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' <<<"$img" || { echo "::error file=projects/$r::$e: '$img' isn't <image>:<tag>@sha256:<digest> (or null)"; ok=false; }
+            done < <(yq -r '.environments | keys | .[]' "$f")
+          done
+          $ok
+      # null means "not deployed yet", and only that: once an environment has had an image, setting it
+      # back to null would leave the app pointing at the never-deployed placeholder, and its next
+      # redeploy would fail. Roll back by setting a previous image instead.
+      - name: release.yaml never goes back to null
+        if: github.event_name == 'pull_request'
+        working-directory: projects
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          ok=true
+          for r in */release.yaml; do
+            base=$(git show "$BASE:projects/$r" 2>/dev/null) || continue
+            while IFS= read -r e; do
+              was=$(E="$e" yq -r '.[strenv(E)] // ""' <<<"$base")
+              [ -z "$was" ] && continue
+              # A removed line is a retired environment (or a missing one, which the names check catches
+              # while the environment is still in project.yaml), not a reset.
+              [ "$(E="$e" yq -r 'has(strenv(E))' "$r")" = true ] || continue
+              if [ "$(E="$e" yq -r '.[strenv(E)] | tag' "$r")" = '!!null' ]; then
+                echo "::error file=projects/$r::$e was deployed ($was); it can't go back to null. To roll back, set a previous image (git log -p projects/$r)."; ok=false
+              fi
+            done < <(yq -r 'keys | .[]' <<<"$base")
+          done
+          $ok
+      # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
+      # can't write policies). Fail early, with the line to add, if a project or environment isn't there.
+      - name: listed in infrastructure's projects.yaml
+        working-directory: projects
+        run: |
+          url=https://raw.githubusercontent.com/kthaisociety/infrastructure/main/terraform/openbao/projects.yaml
+          if ! curl -sSf -o /tmp/infra-projects.yaml "$url"; then
+            echo "::error::Couldn't read $url. Every project needs a line there (its OpenBao policies); if the file is new, the infrastructure PR adding it isn't merged yet."
+            exit 1
+          fi
+          ok=true
+          for f in */project.yaml; do
+            p=${f%/project.yaml}
+            if [ "$(P="$p" yq -r 'has(strenv(P))' /tmp/infra-projects.yaml)" != true ]; then
+              envs=$(yq -r '.environments | keys | join(", ")' "$f")
+              echo "::error file=projects/$f::$p isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml, so it has no OpenBao policies. Add (via a PR there):  $p: {}   (gives staging and production; this project has: $envs)"
+              ok=false
+              continue
+            fi
+            listed=$(P="$p" yq -r '.[strenv(P)].environments // ["staging", "production"] | .[]' /tmp/infra-projects.yaml)
+            while IFS= read -r e; do
+              grep -qxF "$e" <<<"$listed" || { echo "::error file=projects/$f::$p's environment '$e' isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml. Add it to $p's environments there."; ok=false; }
+            done < <(yq -r '.environments | keys | .[]' "$f")
+          done
+          $ok
+
+  plan:
+    if: github.event_name == 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    # Holds the same secrets as production. Its required reviewers gate them: approving a run executes
+    # the branch's workflow and OpenTofu code with those secrets, so review the whole diff first.
+    environment: plan
+    permissions:
+      contents: read
+      id-token: write # the GitHub OIDC token for OpenBao (deployments-ci accepts the plan environment)
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      TF_VAR_state_passphrase: ${{ secrets.TF_VAR_STATE_PASSPHRASE }}
+      DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - name: GitHub OIDC token for OpenBao
+        run: |
+          JWT=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://bao.kthais.com" | jq -r .value)
+          echo "::add-mask::$JWT"
+          echo "TF_VAR_openbao_jwt=$JWT" >> "$GITHUB_ENV"
+      - run: tofu init
+      - name: tofu plan
+        run: |
+          tofu plan -lock=false -no-color | tee plan.txt
+          {
+            echo '### plan'
+            echo '```'
+            cat plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    if: github.ref == 'refs/heads/main' && contains(fromJSON('["push", "schedule", "workflow_dispatch"]'), github.event_name)
+    needs: check
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # the GitHub OIDC token for OpenBao
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      TF_VAR_state_passphrase: ${{ secrets.TF_VAR_STATE_PASSPHRASE }}
+      DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+    steps:
+      # A re-run of an old run checks out its old commit: applying it would roll back every project
+      # changed since. Only main's tip is applied. A run that a later push overtook (it queued behind
+      # another apply) skips too: the later run applies this commit's changes as well.
+      - name: Only main's current tip
+        id: tip
+        working-directory: .
+        run: |
+          tip=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main | cut -f1)
+          if [ "$tip" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$GITHUB_SHA isn't main's tip ($tip) any more: not applying it."
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.tip.outputs.current == 'true'
+        with:
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        if: steps.tip.outputs.current == 'true'
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - name: GitHub OIDC token for OpenBao
+        if: steps.tip.outputs.current == 'true'
+        working-directory: .
+        run: |
+          JWT=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://bao.kthais.com" | jq -r .value)
+          echo "::add-mask::$JWT"
+          echo "TF_VAR_openbao_jwt=$JWT" >> "$GITHUB_ENV"
+      - run: tofu init
+        if: steps.tip.outputs.current == 'true'
+      - run: tofu apply -auto-approve
+        if: steps.tip.outputs.current == 'true'
