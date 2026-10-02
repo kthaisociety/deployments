@@ -34,9 +34,11 @@ policies decide what a token can read, so this repo's CI can't write them. It on
    production; add `shared: [...]` if it reads shared secrets). That creates its policies and empty
    secret paths. This repo's `check` fails, with that line, until it's there.
 2. Write its secrets in OpenBao (`secret/<project>/<environment>`).
-3. Here: `projects/<project>/project.yaml`, and `release.yaml` with `null` per environment. Merging
-   creates the Dokploy project, environments and vault providers; an app appears once its environment
-   has an image.
+3. Here: `projects/<project>/project.yaml`, and `release.yaml` with a line per environment, `null` until
+   it has an image. Merging creates the Dokploy project, environments, vault providers, and each
+   environment's app and volumes, not deployed. Setting an environment's image deploys it (its volumes
+   are already attached). `release.yaml` is required, with every environment, and `null` never deletes
+   an app.
 
 ## Rules
 

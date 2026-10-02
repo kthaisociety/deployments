@@ -66,13 +66,20 @@ jobs:
             while IFS= read -r e; do
               grep -qxE '[a-z0-9]+' <<<"$e" || { echo "::error file=projects/$f::environment '$e': lowercase letters and digits only"; ok=false; }
             done < <(yq -r '.environments | keys | .[]' "$f")
+            # release.yaml: required, with a line for every environment (a missing file or line must
+            # never read as "nothing deployed"); each value null or <image>:<tag>@sha256:<digest>.
             r="$p/release.yaml"
-            [ -f "$r" ] || continue
+            if [ ! -f "$r" ]; then
+              echo "::error file=projects/$f::$p has no release.yaml. Add one with every environment set to null."; ok=false; continue
+            fi
             while IFS= read -r e; do
-              img=$(E="$e" yq -r '.[strenv(E)] // ""' "$r")
-              [ -z "$img" ] && continue
-              grep -qxE 'ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' <<<"$img" || { echo "::error file=projects/$r::$e: '$img' isn't <image>:<tag>@sha256:<digest>"; ok=false; }
-            done < <(yq -r 'keys | .[]' "$r")
+              if [ "$(E="$e" yq -r 'has(strenv(E))' "$r")" != true ]; then
+                echo "::error file=projects/$r::no line for environment '$e'. Add '$e: null' (not deployed yet) or its image."; ok=false; continue
+              fi
+              [ "$(E="$e" yq -r '.[strenv(E)] | tag' "$r")" = '!!null' ] && continue
+              img=$(E="$e" yq -r '.[strenv(E)]' "$r")
+              grep -qxE 'ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' <<<"$img" || { echo "::error file=projects/$r::$e: '$img' isn't <image>:<tag>@sha256:<digest> (or null)"; ok=false; }
+            done < <(yq -r '.environments | keys | .[]' "$f")
           done
           $ok
       # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI

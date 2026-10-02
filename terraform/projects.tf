@@ -8,8 +8,9 @@ locals {
   projects = {
     for f in fileset(path.module, "../projects/*/project.yaml") :
     basename(dirname(f)) => {
-      config  = yamldecode(file("${path.module}/${f}"))
-      release = try(yamldecode(file("${path.module}/../projects/${basename(dirname(f))}/release.yaml")), null)
+      config = yamldecode(file("${path.module}/${f}"))
+      # Required (check enforces it too): a missing release.yaml must fail, not read as "nothing deployed".
+      release = yamldecode(file("${path.module}/../projects/${basename(dirname(f))}/release.yaml"))
     }
   }
 }
@@ -20,11 +21,11 @@ module "project" {
 
   name    = each.key
   config  = each.value.config
-  release = coalesce(each.value.release, {})
+  release = each.value.release
 }
 
 output "projects" {
-  description = "Per project: its Dokploy project id, and per environment the app's internal name (its host name on dokploy-network), when it has an image."
+  description = "Per project: its Dokploy project id, and per environment the app's internal name (its host name on dokploy-network), image and volumes."
   value = {
     for p, m in module.project : p => {
       project_id = m.project_id

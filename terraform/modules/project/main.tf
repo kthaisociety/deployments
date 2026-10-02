@@ -1,7 +1,12 @@
 # One project's Dokploy side: the Dokploy project and its environments, and per environment a provider
-# token (minted from OpenBao's dokploy-provider role), a vault provider holding it, and, once
-# release.yaml names an image for it, the app itself with its volumes. Env is the plain `env` values
-# plus one generated OpenBao reference per secret name, so no secret value is ever in git or state.
+# token (minted from OpenBao's dokploy-provider role), a vault provider holding it, the app and its
+# volumes. Env is the plain `env` values plus one generated OpenBao reference per secret name, so no app
+# secret value is ever in git or state. (The provider tokens themselves are in this repo's state,
+# encrypted with its passphrase: whoever can decrypt that state can use them.)
+#
+# Every environment's app and volumes exist from the start, but an app only deploys once release.yaml
+# names its image. So its first deploy already has its volumes (a mount can only be attached to an app
+# that exists), and a release.yaml line set back to null never deletes an app.
 
 terraform {
   required_providers {
@@ -25,7 +30,9 @@ locals {
       secrets = distinct(concat(try(local.defaults.secrets, []), try(c.secrets, [])))
       shared  = merge(try(local.defaults.shared, {}), try(c.shared, {}))
       volumes = merge(try(local.defaults.volumes, {}), try(c.volumes, {}))
-      image   = try(var.release[e], null)
+      # Required for every environment (check enforces it too): a missing line must fail, not quietly
+      # read as "no image".
+      image = var.release[e]
     }
   }
 
@@ -34,7 +41,6 @@ locals {
   secret_path   = { for e, _ in local.environments : e => "${var.name}/${e}" }
   policy        = { for e, _ in local.environments : e => "dokploy-project-${var.name}-${e}" }
 
-  deployed = { for e, c in local.environments : e => c if c.image != null }
 }
 
 resource "dokploy_project" "this" {
@@ -103,35 +109,39 @@ locals {
 }
 
 resource "dokploy_application" "this" {
-  for_each        = local.deployed
+  for_each        = local.environments
   name            = var.name
   app_name_prefix = "${var.name}-${each.key}"
   environment_id  = local.environment_ids[each.key]
 
-  # The exact image, tag@digest, from release.yaml. Public on GHCR: no registry credentials.
+  # The exact image, tag@digest, from release.yaml (public on GHCR: no registry credentials). Until it
+  # names one, a placeholder that's never deployed.
   docker = {
-    image = each.value.image
+    image = coalesce(each.value.image, "${local.image}:not-deployed")
   }
 
   env             = local.env_lines[each.key]
   create_env_file = false
-  # Deploys happen when release.yaml or the config changes, through this repo, never on their own.
+  # Never on its own (no webhook deploys). Only through this repo, and only once there's an image: the
+  # change from the placeholder to the first image is the first deploy, with the volumes already there.
   auto_deploy      = false
-  deploy_on_change = true
+  deploy_on_change = each.value.image != null
 
   depends_on = [dokploy_vault_provider.this]
 
   lifecycle {
     precondition {
-      condition     = startswith(each.value.image, "${local.image}:") && strcontains(each.value.image, "@sha256:")
-      error_message = "release.yaml's ${each.key} image must be ${local.image}:<tag>@sha256:<digest>."
+      condition = each.value.image == null || (
+        startswith(each.value.image, "${local.image}:") && can(regex("@sha256:[0-9a-f]{64}$", each.value.image))
+      )
+      error_message = "release.yaml's ${each.key} image must be ${local.image}:<tag>@sha256:<digest>, or null."
     }
   }
 }
 
 locals {
   volumes = merge([
-    for e, c in local.deployed : {
+    for e, c in local.environments : {
       for path, name in c.volumes : "${e}:${path}" => {
         env    = e
         path   = path
