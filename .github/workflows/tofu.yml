@@ -74,6 +74,28 @@ jobs:
             done
           done
           $ok
+      # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
+      # can't write policies). Fail early, with the line to add, if a project or environment isn't there.
+      - name: listed in infrastructure's projects.yaml
+        working-directory: projects
+        run: |
+          curl -sSf -o /tmp/infra-projects.yaml \
+            https://raw.githubusercontent.com/kthaisociety/infrastructure/main/terraform/openbao/projects.yaml
+          ok=true
+          for f in */project.yaml; do
+            p=${f%/project.yaml}
+            if [ "$(yq -r "has(\"$p\")" /tmp/infra-projects.yaml)" != true ]; then
+              envs=$(yq -r '.environments | keys | join(", ")' "$f")
+              echo "::error file=projects/$f::$p isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml, so it has no OpenBao policies. Add (via a PR there):  $p: {}   (gives staging and production; this project has: $envs)"
+              ok=false
+              continue
+            fi
+            listed=$(yq -r ".\"$p\".environments // [\"staging\", \"production\"] | .[]" /tmp/infra-projects.yaml)
+            for e in $(yq -r '.environments | keys | .[]' "$f"); do
+              grep -qx "$e" <<<"$listed" || { echo "::error file=projects/$f::$p's environment '$e' isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml. Add it to $p's environments there."; ok=false; }
+            done
+          done
+          $ok
 
   plan:
     if: github.event_name == 'pull_request'

@@ -30,8 +30,9 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 
 ## Adding a project
 
-1. `infrastructure`: add the project and its environments to `terraform/openbao`'s project list. That
-   creates its policies and empty secret paths.
+1. `infrastructure`: one line in `terraform/openbao/projects.yaml`, `my-app: {}` (staging and
+   production; add `shared: [...]` if it reads shared secrets). That creates its policies and empty
+   secret paths. This repo's `check` fails, with that line, until it's there.
 2. Write its secrets in OpenBao (`secret/<project>/<environment>`).
 3. Here: `projects/<project>/project.yaml`, and `release.yaml` with `null` per environment. Merging
    creates the Dokploy project, environments and vault providers; an app appears once its environment
