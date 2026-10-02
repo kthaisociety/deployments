@@ -1,23 +1,16 @@
-# A deploy request: put a project environment on an image tag, checked, through a PR, and applied.
-# Started by app repos (kthaisociety/workflows' request-deploy.yml, with the kthais-dispatch App) or by
-# hand. One request is one run, start to finish: its result is the deploy's result.
+# A deploy request: put a project environment on an image tag, and apply it, in one run. Started by app
+# repos (kthaisociety/workflows' request-deploy.yml, with the kthais-dispatch App) or by hand (Actions →
+# deploy → Run workflow). The run's result is the deploy's result.
 #
-#  1. Validate the inputs.
-#  2. The project and environment must exist here (project.yaml, release.yaml).
-#  3. Resolve the tag's digest from GHCR. The caller never names bytes, so it can't pair an approved tag
+#  1. Validate the inputs; the project and environment must exist here.
+#  2. Resolve the tag's digest from GHCR. The caller never names bytes, so it can't pair an approved tag
 #     with other ones.
-#  4. Production: the tag must be X.Y.Z, the project's repo must have the GitHub Release vX.Y.Z, and the
+#  3. Production: the tag must be X.Y.Z, the project's repo must have the GitHub Release vX.Y.Z, and the
 #     digest must be the one built from the commit vX.Y.Z points to (sha-<7>).
-#  5. Unless release.yaml already says exactly this: with kthais-deploy, a branch, a one-line commit to
-#     release.yaml (through the API, so GitHub signs it), a PR. Its required checks run like any PR's;
-#     bot-scope limits it to that one file. When they pass, kthais-deploy merges it (it bypasses only
-#     the human review ruleset); if main moved meanwhile, the branch is updated and checked again.
-#  6. Either way, end only on proof: a tofu run on main whose `tofu apply` step ran and succeeded, on a
-#     commit containing the line. A run that skipped its apply (a newer commit overtook it) doesn't
-#     count; if no applying run comes, start one. "Unchanged" alone never means "deployed". If the
-#     applied commit has a different line for this environment, a newer deploy replaced this one before
-#     it was applied: success, with a warning saying so (failing would turn every quick succession of
-#     merges red, and block release promotion, which waits on staging).
+#  4. Commit the one line to release.yaml on main, as kthais-deploy, through GitHub's API (so GitHub signs
+#     it). Unless it's already there. Only this workflow changes release.yaml.
+#  5. Apply main, here, and end with the result. If, at the applied commit, the line is a newer one, a
+#     later deploy replaced this one before it was applied: success, with a warning.
 name: deploy
 run-name: deploy ${{ inputs.project }} ${{ inputs.environment }} ${{ inputs.tag }} [${{ inputs.request_id }}]
 
@@ -44,25 +37,30 @@ on:
 permissions:
   contents: read
 
-# No concurrency group: GitHub keeps only one pending run per group and cancels the others, which would
-# drop requests. Concurrent deploys are safe: each is its own PR on its own line, merged only when up to
-# date with main (retried otherwise), and applies run one at a time in tofu.yml.
+# The same group as tofu.yml's applies: one apply at a time (no state locking on GleSYS). GitHub keeps only
+# one pending run per group: a third request arriving while one runs and one waits cancels the waiting
+# one. Its caller then sees "cancelled" and can re-run; nothing was committed for it.
+concurrency:
+  group: tofu-apply
+  cancel-in-progress: false
 
 defaults:
   run:
     shell: bash
 
+env:
+  TOFU_VERSION: 1.12.6
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # The workflow's own token reads checks and runs, and starts tofu.yml if an apply is needed;
-    # kthais-deploy's token only writes the branch, the PR and the merge.
+    timeout-minutes: 45
+    environment: production
     permissions:
       contents: read
-      checks: read
-      actions: write
-      pull-requests: read
+      id-token: write # the GitHub OIDC token for OpenBao
     env:
       PROJECT: ${{ inputs.project }}
       ENVIRONMENT: ${{ inputs.environment }}
@@ -129,170 +127,72 @@ jobs:
           private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
           repositories: deployments
           permission-contents: write
-          permission-pull-requests: write
 
-      - name: Open the PR
+      - name: Commit the line to main
         if: steps.request.outputs.unchanged != 'true'
-        id: pr
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           LINE: ${{ steps.request.outputs.line }}
           FILE: ${{ steps.request.outputs.file }}
         run: |
-          # Unique per run and attempt: two runs never share (or delete) a branch.
-          branch="deploy/$PROJECT-$ENVIRONMENT-$REQUEST_ID-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          title="chore(deploy): $PROJECT $ENVIRONMENT $TAG"
           repo="$GITHUB_REPOSITORY"
-
-          base=$(gh api "repos/$repo/git/ref/heads/main" --jq .object.sha)
-          gh api -X POST "repos/$repo/git/refs" -f ref="refs/heads/$branch" -f sha="$base" >/dev/null
-          cleanup() { gh api -X DELETE "repos/$repo/git/refs/heads/$branch" >/dev/null 2>&1 || true; }
-          trap 'cleanup' ERR
-
-          # The file at exactly that commit, through the API (the checkout may be older than main).
-          gh api -H 'Accept: application/vnd.github.raw' "repos/$repo/contents/$FILE?ref=$base" > /tmp/release.yaml
-          E="$ENVIRONMENT" L="$LINE" yq -i '.[strenv(E)] = strenv(L)' /tmp/release.yaml
-          blob=$(gh api "repos/$repo/contents/$FILE?ref=$base" --jq .sha)
-          gh api -X PUT "repos/$repo/contents/$FILE" \
-            -f message="$title" -f branch="$branch" -f sha="$blob" \
-            -f content="$(base64 -w0 /tmp/release.yaml)" >/dev/null
-
-          url=$(gh pr create --repo "$repo" --base main --head "$branch" --title "$title" \
-            --body "Deploy request \`$REQUEST_ID\` ([run]($GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID)): \`$PROJECT\` \`$ENVIRONMENT\` → \`$LINE\`. Opened and merged by deploy.yml once its checks pass.")
-          trap - ERR
-          echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          echo "PR: $url" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Wait for its checks, merge
-        if: steps.request.outputs.unchanged != 'true'
-        id: merge
-        env:
-          APP_TOKEN: ${{ steps.app.outputs.token }}
-          GH_TOKEN: ${{ github.token }} # reads (checks: read); merging uses APP_TOKEN
-          PR: ${{ steps.pr.outputs.number }}
-          HEAD_BRANCH: ${{ steps.pr.outputs.branch }} # created by the previous step: no lookup that can fail
-        run: |
-          # The checks no one bypasses (the "main: checks" ruleset). Greptile and approval belong to the
-          # review ruleset, which kthais-deploy bypasses.
-          required=("title / PR title is a Conventional Commit" "check" "bot-scope")
-          give_up() {
-            echo "::error::$1"
-            GH_TOKEN=$APP_TOKEN gh pr close "$PR" --repo "$GITHUB_REPOSITORY" --delete-branch --comment "deploy.yml: $1" || true
-            exit 1
-          }
-          wait_checks() {
-            local deadline=$((SECONDS + 1200)) sha state
-            while :; do
-              sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
-              state=ok
-              for name in "${required[@]}"; do
-                c=$(N="$name" gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?per_page=100" \
-                  --jq '[.check_runs[] | select(.name == env.N)] | sort_by(.started_at) | last | (.status + " " + (.conclusion // ""))')
-                case "$c" in
-                  "completed success") ;;
-                  completed*) give_up "check '$name' failed on the deploy PR" ;;
-                  *) state=pending ;;
-                esac
-              done
-              [ "$state" = ok ] && return 0
-              [ "$SECONDS" -ge "$deadline" ] && give_up "the deploy PR's checks didn't finish within 20 minutes"
-              sleep 10
-            done
-          }
-          for _ in 1 2 3 4 5 6 7 8 9 10; do
-            wait_checks
-            # GitHub's merge API, not `gh pr merge`: gh refuses client-side while the PR shows "review
-            # required" (it wants --admin), so kthais-deploy's ruleset bypass would never be used. The API
-            # applies the rulesets itself: required checks for everyone, the review rule bypassed by
-            # kthais-deploy.
-            if sha=$(GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/merge" \
-                -f merge_method=squash --jq .sha 2> /tmp/merge.err); then
-              # Record the merge first: everything after it is best-effort and must never fail this step,
-              # or the run would skip waiting for the apply of a change that is already merged.
-              echo "sha=$sha" >> "$GITHUB_OUTPUT"
-              echo "Merged as $sha" >> "$GITHUB_STEP_SUMMARY"
-              # The repo deletes merged branches itself; delete it here too, and only warn if it's still
-              # there afterwards (a delete of an already deleted branch fails harmlessly).
-              {
-                GH_TOKEN=$APP_TOKEN gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$HEAD_BRANCH" >/dev/null 2>&1 || true
-                if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$HEAD_BRANCH" >/dev/null 2>&1; then
-                  echo "::warning::Merged, but couldn't delete the branch $HEAD_BRANCH: delete it by hand."
-                fi
-              } || true
+          # Read, edit one line, write with the blob's sha: if main moved in between, GitHub refuses (409)
+          # and it's done again on the new main.
+          for _ in 1 2 3 4 5; do
+            blob=$(gh api "repos/$repo/contents/$FILE?ref=main" --jq .sha)
+            gh api -H 'Accept: application/vnd.github.raw' "repos/$repo/contents/$FILE?ref=main" > /tmp/release.yaml
+            E="$ENVIRONMENT" L="$LINE" yq -i '.[strenv(E)] = strenv(L)' /tmp/release.yaml
+            if commit=$(gh api -X PUT "repos/$repo/contents/$FILE" \
+                -f message="chore(deploy): $PROJECT $ENVIRONMENT $TAG" -f branch=main -f sha="$blob" \
+                -f content="$(base64 -w0 /tmp/release.yaml)" --jq .commit.sha 2> /tmp/put.err); then
+              echo "Committed $commit: $FILE $ENVIRONMENT → $LINE" | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-            echo "Merge refused: $(cat /tmp/merge.err)"
-            # main moved (another deploy or a human merge): bring the branch up to date; its checks run again.
-            GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/update-branch" >/dev/null || true
-            sleep 20
+            echo "Commit refused, retrying on the new main: $(cat /tmp/put.err)"
+            sleep 5
           done
-          give_up "couldn't merge the deploy PR after 10 attempts"
+          echo "::error::Couldn't commit to main after 5 attempts: $(cat /tmp/put.err)"
+          exit 1
 
-      - name: Wait for an apply that includes it
+      # Apply whatever main is now: it contains this deploy (and maybe newer commits, which is fine).
+      - name: Check out main as it is now
+        run: |
+          git fetch -q --depth 1 origin main
+          git checkout -q FETCH_HEAD
+          echo "APPLIED=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: GitHub OIDC token for OpenBao
+        run: |
+          JWT=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://bao.kthais.com" | jq -r .value)
+          echo "::add-mask::$JWT"
+          echo "TF_VAR_openbao_jwt=$JWT" >> "$GITHUB_ENV"
+
+      - name: tofu apply
+        working-directory: terraform
         env:
-          GH_TOKEN: ${{ github.token }}
-          MERGED: ${{ steps.merge.outputs.sha }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_state_passphrase: ${{ secrets.TF_VAR_STATE_PASSPHRASE }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+        run: |
+          tofu init
+          tofu apply -auto-approve
+
+      - name: Result
+        env:
           LINE: ${{ steps.request.outputs.line }}
           FILE: ${{ steps.request.outputs.file }}
         run: |
-          repo="$GITHUB_REPOSITORY"
-          # The commit that must be applied: the merge, or, when the line was already there, main's tip.
-          target=${MERGED:-$(gh api "repos/$repo/git/ref/heads/main" --jq .object.sha)}
-          contains() { # does $1 include $target?
-            local st; st=$(gh api "repos/$repo/compare/$target...$1" --jq .status 2>/dev/null) || return 1
-            [ "$st" = identical ] || [ "$st" = ahead ]
-          }
-          # Failures only count from runs that started after this deploy did: an older failed apply of the
-          # same line (an earlier attempt) must lead to a new apply, not to failing again. An older
-          # success is proof enough.
-          since=$(gh api "repos/$repo/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
-          deadline=$((SECONDS + 1800)); started=""
-          line_at() { # this environment's release.yaml line at commit $1
-            gh api -H 'Accept: application/vnd.github.raw' "repos/$repo/contents/$FILE?ref=$1" | E="$ENVIRONMENT" yq -r '.[strenv(E)] // ""'
-          }
-          while :; do
-            # Look at every recent run first, then decide: an applied success wins; anything still
-            # running is waited for; only then does a (recent) failure count.
-            applied="" applied_url="" pending=false failed=""
-            while IFS=$'\t' read -r id sha status conclusion created url; do
-              [ -n "$id" ] || continue
-              contains "$sha" || continue
-              if [ "$status" != completed ]; then pending=true; continue; fi
-              step=$(gh api "repos/$repo/actions/runs/$id/jobs" \
-                --jq '[.jobs[] | select(.name == "apply") | .steps[] | select(.name == "tofu apply") | .conclusion] | first // ""')
-              if [ "$step" = success ]; then
-                # Newest first: the newest applied commit containing this deploy is what runs now.
-                [ -z "$applied" ] && { applied=$sha; applied_url=$url; }
-                continue
-              fi
-              [[ "$created" < "$since" ]] && continue # an earlier attempt's failure: not this deploy's
-              if [ "$step" = failure ] || [ "$step" = cancelled ] || [ "$conclusion" != success ]; then
-                [ -z "$failed" ] && failed=$url
-              fi
-              # otherwise: skipped its apply, overtaken by a newer commit; that newer run decides
-            done < <(gh api "repos/$repo/actions/workflows/tofu.yml/runs?branch=main&per_page=20" \
-              --jq '.workflow_runs[] | select(.event != "pull_request") | [.id, .head_sha, .status, (.conclusion // "-"), .created_at, .html_url] | @tsv')
-
-            if [ -n "$applied" ]; then
-              now=$(line_at "$applied")
-              if [ "$now" = "$LINE" ]; then
-                echo "Applied by $applied_url" | tee -a "$GITHUB_STEP_SUMMARY"
-              else
-                echo "::warning::Replaced before it was applied: $ENVIRONMENT runs $now (applied by $applied_url), a newer deploy."
-                echo "Superseded: $ENVIRONMENT runs \`$now\` (a newer deploy), not \`$LINE\`. $applied_url" >> "$GITHUB_STEP_SUMMARY"
-              fi
-              exit 0
-            fi
-            if [ "$pending" = false ] && [ -n "$failed" ]; then
-              echo "::error::The apply including this deploy failed: $failed"; exit 1
-            fi
-            # Nothing applying it is running, and nothing has applied it: start an apply of main.
-            if [ "$pending" = false ] && [ -z "$started" ]; then
-              echo "No apply of a commit including $target yet: starting one."
-              gh workflow run tofu.yml --repo "$repo" --ref main
-              started=yes
-            fi
-            [ "$SECONDS" -ge "$deadline" ] && { echo "::error::No successful apply including $target after 30 minutes"; exit 1; }
-            sleep 15
-          done
+          now=$(E="$ENVIRONMENT" yq -r '.[strenv(E)] // ""' "$FILE")
+          if [ "$now" = "$LINE" ]; then
+            echo "Deployed: $PROJECT $ENVIRONMENT runs \`$LINE\` (applied $APPLIED)." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Replaced before it was applied: $PROJECT $ENVIRONMENT runs $now, a newer deploy."
+            echo "Superseded: $PROJECT $ENVIRONMENT runs \`$now\` (a newer deploy), not \`$LINE\`." >> "$GITHUB_STEP_SUMMARY"
+          fi

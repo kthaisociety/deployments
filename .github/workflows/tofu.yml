@@ -9,6 +9,8 @@ on:
     paths:
       - "terraform/**"
       - "projects/**"
+      # release.yaml is only changed by deploy.yml, which applies in the same run.
+      - "!projects/*/release.yaml"
       - ".github/workflows/tofu.yml"
   # Renews every provider token even when nothing changes. Unrenewed, they expire 32 days after the
   # last apply, and every deploy that resolves secrets fails.
@@ -39,11 +41,13 @@ jobs:
   # No secrets. A required check on main.
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # the PR's changed files
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0 # the base branch's release.yaml files, for the null check below
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
@@ -83,30 +87,23 @@ jobs:
             done < <(yq -r '.environments | keys | .[]' "$f")
           done
           $ok
-      # null means "not deployed yet", and only that: once an environment has had an image, setting it
-      # back to null would leave the app pointing at the never-deployed placeholder, and its next
-      # redeploy would fail. Roll back by setting a previous image instead.
-      - name: release.yaml never goes back to null
+      # Only deploy.yml changes an existing release.yaml (it validates the image and applies in the same
+      # run; pushes that only change release.yaml don't trigger an apply). A new project adds its own, with
+      # every environment null.
+      - name: release.yaml only changes through deploy.yml
         if: github.event_name == 'pull_request'
-        working-directory: projects
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
-          ok=true
-          for r in */release.yaml; do
-            base=$(git show "$BASE:projects/$r" 2>/dev/null) || continue
-            while IFS= read -r e; do
-              was=$(E="$e" yq -r '.[strenv(E)] // ""' <<<"$base")
-              [ -z "$was" ] && continue
-              # A removed line is a retired environment (or a missing one, which the names check catches
-              # while the environment is still in project.yaml), not a reset.
-              [ "$(E="$e" yq -r 'has(strenv(E))' "$r")" = true ] || continue
-              if [ "$(E="$e" yq -r '.[strenv(E)] | tag' "$r")" = '!!null' ]; then
-                echo "::error file=projects/$r::$e was deployed ($was); it can't go back to null. To roll back, set a previous image (git log -p projects/$r)."; ok=false
-              fi
-            done < <(yq -r 'keys | .[]' <<<"$base")
-          done
-          $ok
+          changed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | select(.status != "added") | select(.filename | test("^projects/[^/]+/release\\.yaml$")) | .filename')
+          if [ -n "$changed" ]; then
+            while IFS= read -r f; do
+              echo "::error file=$f::release.yaml is changed only by the deploy workflow: Actions → deploy → Run workflow (a previous tag rolls back). A merged edit here wouldn't be applied."
+            done <<<"$changed"
+            exit 1
+          fi
       # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
       # can't write policies). Fail early, with the line to add, if a project or environment isn't there.
       - name: listed in infrastructure's projects.yaml
@@ -134,9 +131,7 @@ jobs:
           $ok
 
   plan:
-    # Not for the deploy bot's PRs: they only change an image line (bot-scope), and a plan here waits for a
-    # reviewer, which would stall every deploy. The apply on main still plans first.
-    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'kthais-deploy[bot]'
+    if: github.event_name == 'pull_request'
     needs: check
     runs-on: ubuntu-latest
     # Holds the same secrets as production. Its required reviewers gate them: approving a run executes
@@ -228,7 +223,6 @@ jobs:
           echo "TF_VAR_openbao_jwt=$JWT" >> "$GITHUB_ENV"
       - run: tofu init
         if: steps.tip.outputs.current == 'true'
-      # deploy.yml looks for this step by name: it ran and succeeded = the commit was applied.
       - name: tofu apply
         run: tofu apply -auto-approve
         if: steps.tip.outputs.current == 'true'
