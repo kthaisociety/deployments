@@ -98,6 +98,9 @@ jobs:
             while IFS= read -r e; do
               was=$(E="$e" yq -r '.[strenv(E)] // ""' <<<"$base")
               [ -z "$was" ] && continue
+              # A removed line is a retired environment (or a missing one, which the names check catches
+              # while the environment is still in project.yaml), not a reset.
+              [ "$(E="$e" yq -r 'has(strenv(E))' "$r")" = true ] || continue
               if [ "$(E="$e" yq -r '.[strenv(E)] | tag' "$r")" = '!!null' ]; then
                 echo "::error file=projects/$r::$e was deployed ($was); it can't go back to null. To roll back, set a previous image (git log -p projects/$r)."; ok=false
               fi
