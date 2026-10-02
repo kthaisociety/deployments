@@ -21,7 +21,7 @@ terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
 .github/workflows/
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
-  deploy.yml      # deploy requests from app repos: check, bot PR on release.yaml, merge, wait for the apply
+  deploy.yml      # deploy requests: validate, commit the release.yaml line, apply, report (one run)
 ```
 
 A project's OpenBao side (its policies and empty secret paths) lives in

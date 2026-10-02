@@ -89,7 +89,7 @@ jobs:
           $ok
       # Only deploy.yml changes an existing release.yaml (it validates the image and applies in the same
       # run; pushes that only change release.yaml don't trigger an apply). A new project adds its own, with
-      # every environment null.
+      # every environment null, which is checked too.
       - name: release.yaml only changes through deploy.yml
         if: github.event_name == 'pull_request'
         env:
@@ -98,12 +98,26 @@ jobs:
         run: |
           changed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
             --jq '.[] | select(.status != "added") | select(.filename | test("^projects/[^/]+/release\\.yaml$")) | .filename')
+          ok=true
           if [ -n "$changed" ]; then
             while IFS= read -r f; do
               echo "::error file=$f::release.yaml is changed only by the deploy workflow: Actions → deploy → Run workflow (a previous tag rolls back). A merged edit here wouldn't be applied."
             done <<<"$changed"
-            exit 1
+            ok=false
           fi
+          # A new project's release.yaml starts with every environment null: images only arrive through
+          # deploy.yml, which checks the digest and, for production, the release.
+          added=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | select(.status == "added") | select(.filename | test("^projects/[^/]+/release\\.yaml$")) | .filename')
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            set_envs=$(yq -r 'to_entries | map(select(.value != null)) | .[].key' "$f")
+            if [ -n "$set_envs" ]; then
+              echo "::error file=$f::a new release.yaml must have every environment null (set: $(tr '\n' ' ' <<<"$set_envs")). Deploy with the deploy workflow after merging."
+              ok=false
+            fi
+          done <<<"$added"
+          $ok
       # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
       # can't write policies). Fail early, with the line to add, if a project or environment isn't there.
       - name: listed in infrastructure's projects.yaml

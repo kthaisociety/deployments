@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read
       id-token: write # the GitHub OIDC token for OpenBao
+      actions: write # to start a tofu run if this one fails after committing
     env:
       PROJECT: ${{ inputs.project }}
       ENVIRONMENT: ${{ inputs.environment }}
@@ -131,6 +132,7 @@ jobs:
 
       - name: Commit the line to main
         if: steps.request.outputs.unchanged != 'true'
+        id: commit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           LINE: ${{ steps.request.outputs.line }}
@@ -147,6 +149,7 @@ jobs:
                 -f message="chore(deploy): $PROJECT $ENVIRONMENT $TAG" -f branch=main -f sha="$blob" \
                 -f content="$(base64 -w0 /tmp/release.yaml)" --jq .commit.sha 2> /tmp/put.err); then
               echo "Committed $commit: $FILE $ENVIRONMENT → $LINE" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "committed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "Commit refused, retrying on the new main: $(cat /tmp/put.err)"
@@ -197,3 +200,14 @@ jobs:
             echo "::warning::Replaced before it was applied: $PROJECT $ENVIRONMENT runs $now, a newer deploy."
             echo "Superseded: $PROJECT $ENVIRONMENT runs \`$now\` (a newer deploy), not \`$LINE\`." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # Committed but not applied (the apply failed, or the run was stopped): release.yaml now says
+      # something that isn't running, and pushes that only change release.yaml don't trigger an apply. So
+      # start one. This run still reports its own failure.
+      - name: Recover, start an apply of main
+        if: (failure() || cancelled()) && steps.commit.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run tofu.yml --repo "$GITHUB_REPOSITORY" --ref main
+          echo "::warning::This deploy committed its line but didn't finish applying it: started a tofu run on main to apply it."
