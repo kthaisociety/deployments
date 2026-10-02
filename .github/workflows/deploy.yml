@@ -200,12 +200,18 @@ jobs:
           }
           for _ in 1 2 3 4 5 6 7 8 9 10; do
             wait_checks
-            if GH_TOKEN=$APP_TOKEN gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch; then
-              sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json mergeCommit -q .mergeCommit.oid)
+            # GitHub's merge API, not `gh pr merge`: gh refuses client-side while the PR shows "review
+            # required" (it wants --admin), so kthais-deploy's ruleset bypass would never be used. The API
+            # applies the rulesets itself: required checks for everyone, the review rule bypassed by
+            # kthais-deploy.
+            if sha=$(GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/merge" \
+                -f merge_method=squash --jq .sha 2> /tmp/merge.err); then
+              GH_TOKEN=$APP_TOKEN gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)" >/dev/null 2>&1 || true
               echo "sha=$sha" >> "$GITHUB_OUTPUT"
               echo "Merged as $sha" >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
+            echo "Merge refused: $(cat /tmp/merge.err)"
             # main moved (another deploy or a human merge): bring the branch up to date; its checks run again.
             GH_TOKEN=$APP_TOKEN gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR/update-branch" >/dev/null || true
             sleep 20
