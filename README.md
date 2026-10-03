@@ -34,12 +34,12 @@ policies decide what a token can read, so this repo's CI can't write them. It on
    production; add `shared: [...]` if it reads shared secrets). That creates its policies and empty
    secret paths. This repo's `check` fails, with that line, until it's there.
 2. Write its secrets in OpenBao (`secret/<project>/<environment>`).
-3. Here: `projects/<project>/project.yaml`, and `release.yaml` with a line per environment, `null` until
-   it has an image. Merging creates the Dokploy project, environments, vault providers, and each
-   environment's app and volumes, not deployed. Setting an environment's image deploys it (its volumes
-   are already attached). `release.yaml` is required, with every environment. `null` means "not
-   deployed yet" only: once an environment has had an image, `check` rejects setting it back to `null`
-   (roll back by setting a previous image).
+3. Here, one PR: `projects/<project>/project.yaml`; `projects/<project>/release.yaml` with every
+   environment `null`; and the project added to the `project` options in `.github/workflows/deploy.yml`
+   (the dropdown; `check` fails if it's missing). Merging creates the Dokploy project, environments, vault
+   providers, and each environment's app and volumes, not deployed.
+4. Deploy with the deploy workflow (or the app repo's `deploy-staging` job). From then on only the deploy
+   workflow changes `release.yaml`.
 
 ## Rules
 
@@ -53,8 +53,8 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 - **Automatically**, from an app repo that has opted in (a `request-deploy` job in its `build.yml` for
   staging, in its `release.yml` for production): its CI starts `deploy.yml` here with the project,
   environment and tag, and waits for the result.
-- **By hand**: Actions → deploy → Run workflow, with the project, environment, tag (`sha-<7>` or
-  `X.Y.Z`) and any request id. **Rolling back is the same**, with a previous tag.
+- **By hand**: Actions → deploy → Run workflow: pick the project and environment from the dropdowns,
+  type the tag (`sha-<7>` or `X.Y.Z`). **Rolling back is the same**, with a previous tag.
 
 One run does the whole deploy:
 1. Validate the request, and look up the tag's digest in GHCR. For production: the tag must be a

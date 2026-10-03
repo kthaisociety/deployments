@@ -18,21 +18,27 @@ on:
   workflow_dispatch:
     inputs:
       project:
-        description: Project, as in projects/<project>/.
+        description: Project (a folder in projects/; check fails if one is missing here).
         required: true
-        type: string
+        type: choice
+        options:
+          - onboarding-service
       environment:
-        description: Environment, e.g. staging or production.
+        description: Environment.
         required: true
-        type: string
+        type: choice
+        options:
+          - staging
+          - production
       tag:
-        description: Image tag, sha-<7> (staging) or X.Y.Z (a release).
+        description: Image tag, sha-<7> (staging) or X.Y.Z (a release). A previous one rolls back.
         required: true
         type: string
       request_id:
-        description: The caller's id for this request, so it can find this run. Any value when run by hand.
-        required: true
+        description: Set by app repos, so they can find this run. Leave as is when running by hand.
+        required: false
         type: string
+        default: manual
 
 permissions:
   contents: read
