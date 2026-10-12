@@ -28,7 +28,7 @@ environments:
   staging:
     # Demo of every domain setting, switched off: the service stays internal.
     domains:
-      max-face.text:
+      test-domain.test:
         port: 3333
         https: true
         certificate_type: custom
