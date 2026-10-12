@@ -14,6 +14,24 @@ variable "config" {
     condition     = alltrue([for e in keys(var.config.environments) : can(regex("^[a-z0-9]+$", e))])
     error_message = "Environment names are lowercase letters and digits only, no hyphens: <project>-<environment> must split at the last hyphen."
   }
+  validation {
+    condition     = try(var.config.defaults.domains, null) == null
+    error_message = "Domains go under each environment, not defaults: a default domain would put the same host on every environment."
+  }
+  # A misspelt setting would otherwise be ignored and quietly fall back to its default.
+  validation {
+    condition = alltrue(flatten([
+      for e, c in var.config.environments : [
+        for host, s in try(c.domains, {}) : [
+          for k in try(keys(s), []) : contains([
+            "port", "https", "certificate_type", "custom_cert_resolver", "path", "internal_path",
+            "strip_path", "enabled", "forward_auth_enabled", "custom_entrypoint", "compose_id", "service_name",
+          ], k)
+        ]
+      ]
+    ]))
+    error_message = "A domain in project.yaml has an unknown setting. Allowed: port, https, certificate_type, custom_cert_resolver, path, internal_path, strip_path, enabled, forward_auth_enabled, custom_entrypoint, compose_id, service_name."
+  }
 }
 
 variable "release" {

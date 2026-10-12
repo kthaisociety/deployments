@@ -25,5 +25,20 @@ defaults:
 environments:
   # Its secrets are inert (a service account JSON with no real key, a dummy Mattermost token, its own
   # shared secret): it starts and resolves every reference, and can't touch a real account.
-  staging: {}
+  staging:
+    # Demo of every domain setting, switched off: the service stays internal.
+    domains:
+      max-face.text:
+        port: 3333
+        https: true
+        certificate_type: custom
+        custom_cert_resolver: aisresolver
+        path: /api
+        internal_path: /
+        strip_path: true
+        enabled: false
+        forward_auth_enabled: false
+        custom_entrypoint: aisentry
+        compose_id:
+        service_name:
   production: {}

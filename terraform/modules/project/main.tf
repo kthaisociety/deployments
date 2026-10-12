@@ -30,6 +30,7 @@ locals {
       secrets = distinct(concat(try(local.defaults.secrets, []), try(c.secrets, [])))
       shared  = merge(try(local.defaults.shared, {}), try(c.shared, {}))
       volumes = merge(try(local.defaults.volumes, {}), try(c.volumes, {}))
+      domains = try(c.domains, {})
       # Required for every environment (check enforces it too): a missing line must fail, not quietly
       # read as "no image".
       image = var.release[e]
@@ -158,4 +159,48 @@ resource "dokploy_mount" "volume" {
   type         = "volume"
   volume_name  = each.value.volume
   mount_path   = each.value.path
+}
+
+# One entry per environment and hostname, keyed "<env>:<host>" so that removing one domain never shifts
+# another one's key.
+locals {
+  domains = merge([
+    for e, c in local.environments : {
+      for host, settings in c.domains : "${e}:${host}" => {
+        env      = e
+        host     = host
+        settings = settings
+      }
+    }
+  ]...)
+}
+
+# Every setting in project.yaml passes through. Anything left out is null, which means the provider's
+# own default, except https (on) and certificate_type (Let's Encrypt when https is on).
+resource "dokploy_domain" "this" {
+  for_each = local.domains
+
+  # Exactly one of the two: this environment's app, unless the domain names a compose service.
+  application_id = try(each.value.settings.compose_id, null) == null ? dokploy_application.this[each.value.env].id : null
+  compose_id     = try(each.value.settings.compose_id, null)
+  service_name   = try(each.value.settings.service_name, null)
+
+  host                 = each.value.host
+  port                 = try(each.value.settings.port, null)
+  https                = try(each.value.settings.https, true)
+  certificate_type     = try(each.value.settings.certificate_type, try(each.value.settings.https, true) ? "letsencrypt" : "none")
+  custom_cert_resolver = try(each.value.settings.custom_cert_resolver, null)
+  custom_entrypoint    = try(each.value.settings.custom_entrypoint, null)
+  path                 = try(each.value.settings.path, null)
+  internal_path        = try(each.value.settings.internal_path, null)
+  strip_path           = try(each.value.settings.strip_path, null)
+  enabled              = try(each.value.settings.enabled, null)
+  forward_auth_enabled = try(each.value.settings.forward_auth_enabled, null)
+
+  lifecycle {
+    precondition {
+      condition     = try(each.value.settings.port, null) != null
+      error_message = "project.yaml's ${each.value.env} domain ${each.value.host} needs a port: the container port Traefik forwards to."
+    }
+  }
 }
