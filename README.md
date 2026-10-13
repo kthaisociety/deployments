@@ -17,7 +17,7 @@ projects/<project>/
   project.yaml    # config, secret names, environments (staging, production)
   release.yaml    # the image each environment runs, tag@digest; written by the deploy bot
 terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
-  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes
+  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes, domains
 .github/workflows/
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
@@ -40,6 +40,16 @@ policies decide what a token can read, so this repo's CI can't write them. It on
    providers, and each environment's app and volumes, not deployed.
 4. Deploy with the deploy workflow (or the app repo's `deploy-staging` job). From then on only the deploy
    workflow changes `release.yaml`.
+
+## Adding a domain
+
+1. In `projects/<project>/project.yaml`, under the environment (never `defaults`): `domains:`, keyed by
+   hostname. `port` (the container port Traefik forwards to) is required. Optional: `https`,
+   `certificate_type`, `custom_cert_resolver`, `path`, `internal_path`, `strip_path`, `enabled`,
+   `forward_auth_enabled`, `custom_entrypoint`.
+2. Left out: HTTPS on, with a Let's Encrypt certificate; everything else is Dokploy's default. A
+   misspelt setting fails the plan instead of being ignored.
+3. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.
 
 ## Rules
 

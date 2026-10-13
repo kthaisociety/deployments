@@ -57,6 +57,9 @@ jobs:
         working-directory: terraform
       - run: tofu validate
         working-directory: terraform
+      # Mock providers, so no secrets: modules/project's defaults and rejection rules, without a plan.
+      - run: tofu init -backend=false && tofu test
+        working-directory: terraform/modules/project
       # modules/project checks these too, but only in a plan, which needs a reviewer.
       - name: project and environment names, release images
         working-directory: projects
