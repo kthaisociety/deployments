@@ -25,12 +25,5 @@ defaults:
 environments:
   # Its secrets are inert (a service account JSON with no real key, a dummy Mattermost token, its own
   # shared secret): it starts and resolves every reference, and can't touch a real account.
-  staging:
-    # Demo of every domain setting, switched off: the service stays internal.
-    domains:
-      test-domain.test:
-        port: 3333
-
-        # Disabled the domain to not accidentally make a public domain on dokploy
-        enabled: false
+  staging: {}
   production: {}
