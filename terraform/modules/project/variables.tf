@@ -25,12 +25,12 @@ variable "config" {
         for host, s in try(c.domains, {}) : [
           for k in try(keys(s), []) : contains([
             "port", "https", "certificate_type", "custom_cert_resolver", "path", "internal_path",
-            "strip_path", "enabled", "forward_auth_enabled", "custom_entrypoint", "compose_id", "service_name",
+            "strip_path", "enabled", "forward_auth_enabled", "custom_entrypoint",
           ], k)
         ]
       ]
     ]))
-    error_message = "A domain in project.yaml has an unknown setting. Allowed: port, https, certificate_type, custom_cert_resolver, path, internal_path, strip_path, enabled, forward_auth_enabled, custom_entrypoint, compose_id, service_name."
+    error_message = "A domain in project.yaml has an unknown setting. Allowed: port, https, certificate_type, custom_cert_resolver, path, internal_path, strip_path, enabled, forward_auth_enabled, custom_entrypoint."
   }
 }
 

@@ -35,11 +35,7 @@ run "port_only_domain_gets_https_and_letsencrypt" {
   }
   assert {
     condition     = dokploy_domain.this["staging:demo.test"].application_id == "app-id"
-    error_message = "A domain without compose_id should route to the environment's app."
-  }
-  assert {
-    condition     = dokploy_domain.this["staging:demo.test"].compose_id == null
-    error_message = "A domain without compose_id should leave compose_id null."
+    error_message = "A domain should route to the environment's app."
   }
 }
 

@@ -30,15 +30,7 @@ environments:
     domains:
       test-domain.test:
         port: 3333
-        https: true
-        certificate_type: custom
-        custom_cert_resolver: custom-resolver
-        path: /path
-        internal_path: /internal-path
-        strip_path: true
+
+        # Disabled the domain to not accidentally make a public domain on dokploy
         enabled: false
-        forward_auth_enabled: false
-        custom_entrypoint: custom-entry
-        compose_id:
-        service_name:
   production: {}

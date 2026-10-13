@@ -48,8 +48,7 @@ policies decide what a token can read, so this repo's CI can't write them. It on
    optional. onboarding-service's `staging` lists them all.
 2. Left out: HTTPS on, with a Let's Encrypt certificate; everything else is Dokploy's default. A
    misspelt setting fails the plan instead of being ignored.
-3. To route to a compose service instead of the environment's app, set `compose_id` and `service_name`.
-4. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.
+3. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.
 
 ## Rules
 

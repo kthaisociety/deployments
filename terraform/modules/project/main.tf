@@ -180,11 +180,7 @@ locals {
 resource "dokploy_domain" "this" {
   for_each = local.domains
 
-  # Exactly one of the two: this environment's app, unless the domain names a compose service.
-  application_id = try(each.value.settings.compose_id, null) == null ? dokploy_application.this[each.value.env].id : null
-  compose_id     = try(each.value.settings.compose_id, null)
-  service_name   = try(each.value.settings.service_name, null)
-
+  application_id       = dokploy_application.this[each.value.env].id
   host                 = each.value.host
   port                 = try(each.value.settings.port, null)
   https                = try(each.value.settings.https, true)
