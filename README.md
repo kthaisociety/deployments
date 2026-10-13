@@ -44,8 +44,9 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 ## Adding a domain
 
 1. In `projects/<project>/project.yaml`, under the environment (never `defaults`): `domains:`, keyed by
-   hostname. `port` (the container port Traefik forwards to) is required; every other setting is
-   optional. onboarding-service's `staging` lists them all.
+   hostname. `port` (the container port Traefik forwards to) is required. Optional: `https`,
+   `certificate_type`, `custom_cert_resolver`, `path`, `internal_path`, `strip_path`, `enabled`,
+   `forward_auth_enabled`, `custom_entrypoint`.
 2. Left out: HTTPS on, with a Let's Encrypt certificate; everything else is Dokploy's default. A
    misspelt setting fails the plan instead of being ignored.
 3. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.
