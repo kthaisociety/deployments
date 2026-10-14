@@ -5,5 +5,10 @@
 # no problems, 1 otherwise.
 set -euo pipefail
 
-echo "check-project-yaml: not implemented" >&2
-exit 2
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="$repo/.venv"
+if [ ! -x "$venv/bin/python" ]; then
+  python3 -m venv "$venv"
+  "$venv/bin/pip" install --quiet -r "$repo/requirements.txt"
+fi
+exec "$venv/bin/python" "$repo/scripts/check_project_yaml.py" "$@"

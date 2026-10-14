@@ -1,0 +1,120 @@
+# What project.yaml may contain. Every rule about the file lives here (ADR-0001), and scripts/check_project_yaml.py
+# only loads files, runs this schema and words its errors. Stricter than terraform/modules/project on purpose:
+# per-environment secrets, shared secrets and volumes are rejected, and only staging and production exist.
+$schema: https://json-schema.org/draft/2020-12/schema
+title: project.yaml
+type: object
+additionalProperties: false
+required: [repo, defaults, environments]
+properties:
+  repo:
+    type: string
+  image:
+    type: string
+  defaults:
+    type: object
+    additionalProperties: false
+    required: [env, secrets, shared, volumes]
+    properties:
+      env:
+        $ref: "#/$defs/env"
+      secrets:
+        type: array
+        items:
+          type: string
+      shared:
+        type: object
+        additionalProperties:
+          type: array
+          items:
+            type: string
+      volumes:
+        type: object
+        additionalProperties:
+          type: string
+  environments:
+    type: object
+    additionalProperties: false
+    required: [staging, production]
+    properties:
+      staging:
+        $ref: "#/$defs/environment"
+      production:
+        $ref: "#/$defs/environment"
+
+$defs:
+  env:
+    type: object
+    additionalProperties:
+      type: [string, number, boolean]
+
+  environment:
+    type: object
+    additionalProperties: false
+    properties:
+      env:
+        $ref: "#/$defs/env"
+      domains:
+        type: object
+        additionalProperties:
+          $ref: "#/$defs/domain"
+
+  domain:
+    type: object
+    additionalProperties: false
+    required: [port]
+    properties:
+      port:
+        type: integer
+        minimum: 1
+        maximum: 65535
+      https:
+        type: boolean
+      certificate_type:
+        enum: [letsencrypt, none, custom]
+      custom_cert_resolver:
+        type: string
+      path:
+        type: string
+        pattern: "^/"
+      internal_path:
+        type: string
+        pattern: "^/"
+      strip_path:
+        type: boolean
+      enabled:
+        type: boolean
+      forward_auth_enabled:
+        type: boolean
+      custom_entrypoint:
+        type: string
+    allOf:
+      # custom needs a resolver.
+      - if:
+          properties:
+            certificate_type:
+              const: custom
+          required: [certificate_type]
+        then:
+          required: [custom_cert_resolver]
+      # A resolver without certificate_type custom is an error, reported at custom_cert_resolver.
+      - if:
+          not:
+            properties:
+              certificate_type:
+                const: custom
+            required: [certificate_type]
+        then:
+          properties:
+            custom_cert_resolver:
+              not: {}
+      # https: false serves no certificate, so only none is allowed.
+      - if:
+          properties:
+            https:
+              const: false
+          required: [https]
+        then:
+          properties:
+            certificate_type:
+              enum: [none]
