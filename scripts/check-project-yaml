@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# The project.yaml check, the same one the required check runs on every PR:
+#   scripts/check-project-yaml [root]
+# Sets up .venv from requirements.txt on first run, then runs check_project_yaml.py. Exit code 0 with
+# no problems, 1 otherwise.
+set -euo pipefail
+
+echo "check-project-yaml: not implemented" >&2
+exit 2
