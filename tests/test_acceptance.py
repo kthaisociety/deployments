@@ -310,9 +310,11 @@ def test_path_without_leading_slash_fails(repo, key):
 
 
 def test_invalid_yaml_reports_parser_line_and_reason(repo):
-    """A file that isn't valid YAML gives one problem with no path, at the parser's line."""
+    """A file that isn't valid YAML gives one problem with no path, at the parser's line, with its reason."""
     write(repo, PROJECT, "repo: example/demo\ndefaults:\n  env: {}\n\tsecrets: []\n")
-    assert [(p.path, p.line) for p in check(repo) if p.file == PROJECT] == [(None, 4)]
+    problems = [p for p in check(repo) if p.file == PROJECT]
+    assert [(p.path, p.line) for p in problems] == [(None, 4)]
+    assert "cannot start any token" in problems[0].message
 
 
 def test_invalid_yaml_does_not_stop_other_files(repo):
