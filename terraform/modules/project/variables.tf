@@ -32,6 +32,14 @@ variable "config" {
     ]))
     error_message = "A domain in project.yaml has an unknown setting. Allowed: port, https, certificate_type, custom_cert_resolver, path, internal_path, strip_path, enabled, forward_auth_enabled, custom_entrypoint."
   }
+  validation {
+    condition = alltrue(flatten([
+      for c in concat([try(var.config.defaults, {})], values(var.config.environments)) : [
+        for k in try(keys(c.postgres), []) : contains(["image"], k)
+      ]
+    ]))
+    error_message = "postgres in project.yaml has an unknown setting. Allowed: image."
+  }
 }
 
 variable "release" {

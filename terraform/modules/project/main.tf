@@ -16,6 +16,9 @@ terraform {
     dokploy = {
       source = "vanillauys/dokploy"
     }
+    random = {
+      source = "hashicorp/random"
+    }
   }
 }
 
@@ -31,6 +34,9 @@ locals {
       shared  = merge(try(local.defaults.shared, {}), try(c.shared, {}))
       volumes = merge(try(local.defaults.volumes, {}), try(c.volumes, {}))
       domains = try(c.domains, {})
+      # null: no database. {} or settings: one Postgres, the environment's settings on top of defaults'.
+      postgres = (try(local.defaults.postgres, null) == null && try(c.postgres, null) == null ? null :
+      merge(coalesce(try(local.defaults.postgres, null), {}), coalesce(try(c.postgres, null), {})))
       # Required for every environment (check enforces it too): a missing line must fail, not quietly
       # read as "no image".
       image = var.release[e]
@@ -97,6 +103,110 @@ resource "dokploy_vault_provider" "this" {
   verify_connection = true
 }
 
+# Per environment with `postgres`: a Postgres service, its password generated here and kept in OpenBao.
+# The value is only ever ephemeral or write-only (*_wo), so it's in no plan, no state, no git and not in
+# the app's env: the app gets every connection setting as a ${{vault.…}} reference to
+# secret/<project>/<env>/postgres.
+#
+# Two secrets, because the host (the database's app_name, with Dokploy's random suffix) exists only once
+# the database does, and the database needs its password first:
+#   1. secret/<project>/<env>/postgres-password: the generated password, written once. The source of truth.
+#   2. the database, created with that password, read back from OpenBao. Never straight from the
+#      generator: if an apply fails between 1 and 2, the next one generates a different password, which
+#      must not reach Dokploy.
+#   3. secret/<project>/<env>/postgres: what the app reads, host and password included.
+#
+# prevent_destroy: removing `postgres` (or the project) fails the plan instead of deleting the data and
+# its credentials. Deleting them is a deliberate `removed` block.
+locals {
+  postgres = { for e, c in local.environments : e => c.postgres if c.postgres != null }
+  # Postgres identifiers: no hyphens.
+  postgres_name = replace(var.name, "-", "_")
+  postgres_keys = ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_URL"]
+}
+
+ephemeral "random_password" "postgres" {
+  for_each = local.postgres
+  length   = 32
+  # Letters and digits: safe in DATABASE_URL without escaping.
+  special = false
+}
+
+resource "vault_kv_secret_v2" "postgres_password" {
+  for_each = local.postgres
+  mount    = "secret"
+  name     = "${local.secret_path[each.key]}/postgres-password"
+  data_json_wo = jsonencode({
+    password = ephemeral.random_password.postgres[each.key].result
+  })
+  # Written once. A new version would change only OpenBao, not the database.
+  data_json_wo_version = 1
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+ephemeral "vault_kv_secret_v2" "postgres_password" {
+  for_each = local.postgres
+  mount    = "secret"
+  name     = vault_kv_secret_v2.postgres_password[each.key].name
+
+  # Opened at apply on the first run, once the secret exists.
+  depends_on = [vault_kv_secret_v2.postgres_password]
+}
+
+resource "dokploy_postgres" "this" {
+  for_each        = local.postgres
+  name            = "${var.name}-db"
+  app_name_prefix = "${var.name}-${each.key}-db"
+  environment_id  = local.environment_ids[each.key]
+  docker_image    = try(each.value.image, "postgres:17-alpine")
+  database_name   = local.postgres_name
+  database_user   = local.postgres_name
+
+  # Postgres sets the password only when it initialises an empty volume, so it's sent once, at create.
+  database_password_wo         = ephemeral.vault_kv_secret_v2.postgres_password[each.key].data.password
+  database_password_wo_version = 1
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+locals {
+  # The non-secret settings: a change to any (a recreated database's new host) rewrites the app's secret.
+  postgres_settings = {
+    for e, _ in local.postgres : e => {
+      POSTGRES_HOST = dokploy_postgres.this[e].app_name
+      POSTGRES_PORT = "5432"
+      POSTGRES_DB   = dokploy_postgres.this[e].database_name
+      POSTGRES_USER = dokploy_postgres.this[e].database_user
+    }
+  }
+}
+
+resource "vault_kv_secret_v2" "postgres" {
+  for_each = local.postgres
+  mount    = "secret"
+  name     = "${local.secret_path[each.key]}/postgres"
+  data_json_wo = jsonencode(merge(local.postgres_settings[each.key], {
+    POSTGRES_PASSWORD = ephemeral.vault_kv_secret_v2.postgres_password[each.key].data.password
+    DATABASE_URL = format("postgresql://%s:%s@%s:%s/%s",
+      local.postgres_settings[each.key].POSTGRES_USER,
+      ephemeral.vault_kv_secret_v2.postgres_password[each.key].data.password,
+      local.postgres_settings[each.key].POSTGRES_HOST,
+      local.postgres_settings[each.key].POSTGRES_PORT,
+      local.postgres_settings[each.key].POSTGRES_DB,
+    )
+  }))
+  data_json_wo_version = parseint(substr(sha256(jsonencode(local.postgres_settings[each.key])), 0, 8), 16)
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 locals {
   env_lines = {
     for e, c in local.environments : e => join("\n", concat(
@@ -105,6 +215,8 @@ locals {
       "${k}=$${{vault.${local.provider_name[e]}.${local.secret_path[e]}:${k}}}"],
       flatten([for name, ks in c.shared : [for k in ks :
       "${k}=$${{vault.${local.provider_name[e]}.shared/${name}/${e}:${k}}}"]]),
+      [for k in(c.postgres == null ? [] : local.postgres_keys) :
+      "${k}=$${{vault.${local.provider_name[e]}.${local.secret_path[e]}/postgres:${k}}}"],
     ))
   }
 }
@@ -128,7 +240,8 @@ resource "dokploy_application" "this" {
   auto_deploy      = false
   deploy_on_change = each.value.image != null
 
-  depends_on = [dokploy_vault_provider.this]
+  # The database's secret too: the first deploy must find every key it references.
+  depends_on = [dokploy_vault_provider.this, vault_kv_secret_v2.postgres]
 
   lifecycle {
     precondition {
