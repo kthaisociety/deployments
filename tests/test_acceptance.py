@@ -484,6 +484,22 @@ def test_reference_missing_key_is_named(repo, line, key):
     assert any(key in p.message for p in check(repo) if p.file == GUIDE)
 
 
+@pytest.mark.parametrize(
+    "filled, empty, path, key",
+    [
+        ("  env:\n    MODE: release\n", "  env: {}\n", ".defaults.env", "env"),
+        ("  secrets:\n    - TOKEN\n", "  secrets: []\n", ".defaults.secrets", "secrets"),
+        ("  shared:\n    group: [SHARED_TOKEN]\n", "  shared: {}\n", ".defaults.shared", "shared"),
+        ("  volumes:\n    /data: data\n", "  volumes: {}\n", ".defaults.volumes", "volumes"),
+    ],
+    ids=["env", "secrets", "shared", "volumes"],
+)
+def test_reference_empty_map_or_list_is_named(repo, filled, empty, path, key):
+    """A reference example that leaves env, secrets, shared or volumes empty fails, naming the key, so the guide shows an entry."""
+    write(repo, GUIDE, guide(("yaml", FULL.replace(filled, empty))))
+    assert key in message_at([p for p in check(repo) if p.file == GUIDE], path)
+
+
 def test_excerpt_of_reference_passes(repo):
     """A ```yaml excerpt block that is consecutive lines of the reference, at any indentation, passes."""
     excerpt = "domains:\n  demo.example.com:\n    port: 3000\n"
