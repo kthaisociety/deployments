@@ -6,6 +6,6 @@
 
 **Consequence:** The schema is stricter than `modules/project` for domains, as it already is for environments and per-environment secrets. A new domain setting in the module comes with its allowed values or its dependency on other settings in the schema. Naming conventions (secret names, volume paths) are not part of this and stay out of the schema.
 
-**Scope:** `schema/project.schema.yaml`, the domain settings
+**Scope:** `docs/project.schema.yaml`, the domain settings
 
 **Date:** 2026-10-14

@@ -1,11 +1,11 @@
-# ADR-0002: Guide examples are whole project.yaml files
+# ADR-0002: The guide has one checked reference example, and excerpts of it
 
-**Decision:** Every ```` ```yaml ```` block in `docs/project-yaml.md` MUST be a complete `project.yaml` that passes the schema; a deliberately wrong example MUST use another fence, such as ```` ```text ````.
+**Decision:** `docs/project-yaml.md` MUST hold exactly one ```` ```yaml ```` block, a complete `project.yaml` that passes the schema and uses every key it allows; every other YAML example MUST be fenced ```` ```yaml excerpt ```` and be consecutive lines of that reference, compared without leading indentation.
 
-**Reason:** Fragments, each tagged with the schema path they sit under, were weighed and lost. They need a tagging scheme and checker code to validate a part of a file against a part of the schema. Whole files need neither, the skeleton is about ten lines, and an author or agent can copy any example and know it passes.
+**Reason:** Every example as a whole file made each section repeat the skeleton, and review asked for one reference covering every option, like an API spec. Unchecked excerpts were weighed and lost: they are the snippets people copy most, and nothing would stop them drifting. Fragments validated against the part of the schema they sit under lost again, as before, because they need a tagging scheme and checker code to validate part of a file against part of a schema. Matching lines against the reference needs neither.
 
-**Consequence:** A guide section shows its field inside a full skeleton, not alone. The check validates every `yaml` block as a file, so a fragment fails CI. The guide's examples can't drift from the schema without the required check failing.
+**Consequence:** A new key in the schema fails the check until the reference uses it. An excerpt can only show what the reference already says, so changing an example means changing the reference. A deliberately wrong example uses another fence, such as ```` ```text ````.
 
 **Scope:** `docs/project-yaml.md`, `scripts/check_project_yaml.py`
 
-**Date:** 2026-10-14
+**Date:** 2026-10-15

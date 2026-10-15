@@ -1,0 +1,22 @@
+# example-service: Go API under /api, embedded React frontend everywhere else, one domain.
+repo: kthaisociety/example-service   # Required. Image defaults to ghcr.io/<repo>.
+
+defaults:
+  env:
+    PORT: "8000"
+    GIN_MODE: release
+    LOG_LEVEL: info
+  secrets:
+    - SESSION_SECRET
+  shared: {}
+  volumes: {}
+
+environments:
+  staging:
+    env:
+      LOG_LEVEL: debug
+    domains:
+      staging.example.kthais.com: {port: 8000}
+  production:
+    domains:
+      example.kthais.com: {port: 8000}

@@ -1,6 +1,7 @@
 """Acceptance tests for #15: the project.yaml schema, guide and check."""
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,7 +13,7 @@ from check_project_yaml import check
 REPO = Path(__file__).resolve().parent.parent
 COMMAND = REPO / "scripts" / "check-project-yaml"
 PROJECT = "projects/demo/project.yaml"
-TEMPLATE = "templates/project.yaml"
+TEMPLATE = "docs/project.template.yaml"
 GUIDE = "docs/project-yaml.md"
 
 MINIMAL = """\
@@ -26,6 +27,43 @@ environments:
   staging: {}
   production: {}
 """
+
+
+FULL = """\
+repo: example/demo
+image: ghcr.io/example/other
+defaults:
+  env:
+    MODE: release
+  secrets:
+    - TOKEN
+  shared:
+    group: [SHARED_TOKEN]
+  volumes:
+    /data: data
+environments:
+  staging:
+    env:
+      MODE: debug
+    domains:
+      demo.example.com:
+        port: 3000
+        https: true
+        certificate_type: custom
+        custom_cert_resolver: myresolver
+        path: /api
+        internal_path: /
+        strip_path: true
+        enabled: true
+        forward_auth_enabled: false
+        custom_entrypoint: websecure
+  production: {}
+"""
+
+
+def guide(*blocks):
+    """A guide holding the given blocks, each (info string, body), in order."""
+    return "# project.yaml\n" + "".join(f"\n```{info}\n{body}```\n" for info, body in blocks)
 
 
 def project_yaml(*, top="", defaults="", staging=" {}", production=" {}"):
@@ -55,10 +93,10 @@ def write(root, rel, text):
 
 @pytest.fixture
 def repo(tmp_path):
-    """A root that passes: one minimal project, the template, and a guide with one example."""
+    """A root that passes: one minimal project, the template, and a guide whose reference is FULL."""
     write(tmp_path, PROJECT, MINIMAL)
     write(tmp_path, TEMPLATE, MINIMAL)
-    write(tmp_path, GUIDE, f"# project.yaml\n\n```yaml\n{MINIMAL}```\n")
+    write(tmp_path, GUIDE, guide(("yaml", FULL)))
     return tmp_path
 
 
@@ -124,13 +162,27 @@ def test_optional_settings_pass(repo):
     assert check(repo) == []
 
 
-def test_env_scalar_values_pass(repo):
-    """env values may be strings, numbers or booleans, under defaults and under an environment."""
+def test_env_string_values_pass(repo):
+    """env values that are strings pass, including quoted numbers and booleans."""
     write(
         repo,
         PROJECT,
-        project_yaml(staging="\n    env:\n      MODE: release\n      PORT: 8080\n      DEBUG: true\n"),
+        project_yaml(staging='\n    env:\n      MODE: release\n      PORT: "8080"\n      DEBUG: "true"\n'),
     )
+    assert check(repo) == []
+
+
+def test_skeleton_without_volumes_passes(repo):
+    """volumes is optional under defaults."""
+    write(repo, PROJECT, MINIMAL.replace("  volumes: {}\n", ""))
+    assert check(repo) == []
+
+
+def test_env_override_is_not_a_collision(repo):
+    """An environment's env setting a name defaults.env also sets is an override, not a collision."""
+    write(repo, PROJECT, MINIMAL.replace("  env: {}", "  env:\n    MODE: release").replace(
+        "  staging: {}", "  staging:\n    env:\n      MODE: debug"
+    ))
     assert check(repo) == []
 
 
@@ -203,12 +255,11 @@ def test_per_environment_secrets_point_to_defaults_and_openbao(repo, key, body):
         ("  env: {}\n", ".defaults.env", "env"),
         ("  secrets: []\n", ".defaults.secrets", "secrets"),
         ("  shared: {}\n", ".defaults.shared", "shared"),
-        ("  volumes: {}\n", ".defaults.volumes", "volumes"),
         ("environments:\n  staging: {}\n  production: {}\n", ".environments", "environments"),
         ("  staging: {}\n", ".environments.staging", "staging"),
         ("  production: {}\n", ".environments.production", "production"),
     ],
-    ids=["repo", "defaults", "env", "secrets", "shared", "volumes", "environments", "staging", "production"],
+    ids=["repo", "defaults", "env", "secrets", "shared", "environments", "staging", "production"],
 )
 def test_missing_skeleton_key_is_named(repo, removed, path, name):
     """A missing skeleton key fails at the path it should have, and the message names it."""
@@ -218,8 +269,12 @@ def test_missing_skeleton_key_is_named(repo, removed, path, name):
 
 @pytest.mark.parametrize(
     "line, path, empty",
-    [("  env: {}\n", ".defaults.env", "{}"), ("  secrets: []\n", ".defaults.secrets", "[]")],
-    ids=["env", "secrets"],
+    [
+        ("  env: {}\n", ".defaults.env", "{}"),
+        ("  secrets: []\n", ".defaults.secrets", "[]"),
+        ("  volumes: {}\n", ".defaults.volumes", "{}"),
+    ],
+    ids=["env", "secrets", "volumes"],
 )
 def test_null_skeleton_key_says_write_empty(repo, line, path, empty):
     """A skeleton key left blank (null) says to write {} or [] when unused."""
@@ -253,6 +308,53 @@ def test_env_non_scalar_value_fails(repo):
     """An env value that is a list fails."""
     write(repo, PROJECT, project_yaml(staging="\n    env:\n      HOSTS: [a, b]\n"))
     assert ".environments.staging.env.HOSTS" in paths(check(repo))
+
+
+@pytest.mark.parametrize("value", ["8080", "true"], ids=["number", "boolean"])
+def test_env_non_string_value_says_quote_it(repo, value):
+    """An env value that is a number or a boolean fails and says to quote it."""
+    write(repo, PROJECT, project_yaml(staging=f"\n    env:\n      PORT: {value}\n"))
+    assert "quote" in message_at(check(repo), ".environments.staging.env.PORT").lower()
+
+
+def test_env_multiline_value_fails(repo):
+    """An env value with a newline in it fails."""
+    write(repo, PROJECT, project_yaml(staging='\n    env:\n      NOTE: "a\\nb"\n'))
+    assert ".environments.staging.env.NOTE" in paths(check(repo))
+
+
+@pytest.mark.parametrize(
+    "text, path, other",
+    [
+        (
+            MINIMAL.replace("  env: {}", "  env:\n    TOKEN: x").replace("  secrets: []", "  secrets: [TOKEN]"),
+            ".defaults.env.TOKEN",
+            ".defaults.secrets[0]",
+        ),
+        (
+            MINIMAL.replace("  env: {}", "  env:\n    TOKEN: x").replace("  shared: {}", "  shared:\n    group: [TOKEN]"),
+            ".defaults.env.TOKEN",
+            ".defaults.shared.group[0]",
+        ),
+        (
+            MINIMAL.replace("  secrets: []", "  secrets: [TOKEN]").replace("  shared: {}", "  shared:\n    group: [TOKEN]"),
+            ".defaults.shared.group[0]",
+            ".defaults.secrets[0]",
+        ),
+        (
+            MINIMAL.replace("  secrets: []", "  secrets: [TOKEN]").replace(
+                "  staging: {}", "  staging:\n    env:\n      TOKEN: x"
+            ),
+            ".environments.staging.env.TOKEN",
+            ".defaults.secrets[0]",
+        ),
+    ],
+    ids=["env-secrets", "env-shared", "secrets-shared", "environment-env-secrets"],
+)
+def test_name_in_two_places_fails_naming_the_other(repo, text, path, other):
+    """A name in two of env, secrets and shared fails at the env key or the shared entry, naming the other path."""
+    write(repo, PROJECT, text)
+    assert other in message_at(check(repo), path)
 
 
 def test_unknown_certificate_type_lists_allowed(repo):
@@ -351,12 +453,49 @@ def test_broken_guide_example_reported_at_guide_line(repo):
 
 def test_guide_text_fence_is_not_checked(repo):
     """A guide block fenced as text, not yaml, isn't checked."""
-    write(
-        repo,
-        GUIDE,
-        f"# project.yaml\n\n```yaml\n{MINIMAL}```\n\nNot this:\n\n```text\n{project_yaml(top='name: x\n')}```\n",
-    )
+    write(repo, GUIDE, guide(("yaml", FULL), ("text", project_yaml(top="name: x\n"))))
     assert check(repo) == []
+
+
+def test_guide_without_reference_fails(repo):
+    """A guide with no ```yaml reference example fails."""
+    write(repo, GUIDE, guide(("text", FULL)))
+    assert GUIDE in {p.file for p in check(repo)}
+
+
+def test_guide_with_two_references_fails(repo):
+    """A guide with more than one ```yaml reference example fails."""
+    write(repo, GUIDE, guide(("yaml", FULL), ("yaml", FULL)))
+    assert GUIDE in {p.file for p in check(repo)}
+
+
+@pytest.mark.parametrize(
+    "line, key",
+    [
+        ("image: ghcr.io/example/other\n", "image"),
+        ("    env:\n      MODE: debug\n", "env"),
+        ("        strip_path: true\n", "strip_path"),
+    ],
+    ids=["image", "environment-env", "strip_path"],
+)
+def test_reference_missing_key_is_named(repo, line, key):
+    """A reference example that leaves out a key the schema allows fails, naming the key."""
+    write(repo, GUIDE, guide(("yaml", FULL.replace(line, ""))))
+    assert any(key in p.message for p in check(repo) if p.file == GUIDE)
+
+
+def test_excerpt_of_reference_passes(repo):
+    """A ```yaml excerpt block that is consecutive lines of the reference, at any indentation, passes."""
+    excerpt = "domains:\n  demo.example.com:\n    port: 3000\n"
+    write(repo, GUIDE, guide(("yaml", FULL), ("yaml excerpt", excerpt)))
+    assert check(repo) == []
+
+
+def test_excerpt_not_in_reference_fails_at_its_fence(repo):
+    """A ```yaml excerpt block that isn't consecutive lines of the reference fails at its opening fence's line."""
+    write(repo, GUIDE, guide(("yaml", FULL), ("yaml excerpt", "port: 4000\n")))
+    fence = 1 + 1 + 1 + FULL.count("\n") + 1 + 1 + 1
+    assert [(p.file, p.line) for p in check(repo)] == [(GUIDE, fence)]
 
 
 def test_empty_template_fails(repo):
@@ -403,3 +542,54 @@ def test_command_prints_file_line_locally(repo):
     """Outside GitHub Actions each problem prints as <file>:<line>: <path>: <message>."""
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
     assert f"{PROJECT}:7: .defaults.secret: " in run_command(repo).stdout
+
+
+# This repo
+
+
+GUIDE_AREAS = [
+    "top level",
+    "defaults",
+    "env",
+    "secrets",
+    "shared secrets",
+    "volumes",
+    "environments",
+    "domains",
+]
+
+
+def guide_sections():
+    """The repo guide's ## headings, lowercased, each mapped to the lines under it up to the next ## heading."""
+    path = REPO / GUIDE
+    assert path.is_file(), f"{GUIDE} is missing"
+    sections, current = {}, None
+    for line in path.read_text().splitlines():
+        if line.startswith("## "):
+            current = line[3:].strip().lower()
+            sections[current] = []
+        elif current is not None:
+            sections[current].append(line)
+    return sections
+
+
+def test_repo_passes_check():
+    """This repo's projects, guide and template pass the check as committed."""
+    assert check(REPO) == []
+
+
+@pytest.mark.parametrize("area", GUIDE_AREAS)
+def test_guide_has_section_per_area(area):
+    """The guide has a ## section for each project.yaml area, with a yaml reference or excerpt in it."""
+    sections = guide_sections()
+    assert area in sections, sorted(sections)
+    assert any(line.strip().startswith("```yaml") for line in sections[area])
+
+
+def test_schema_domain_settings_match_module(repo):
+    """The domain settings the check allows are exactly the ones terraform/modules/project lists."""
+    variables = (REPO / "terraform/modules/project/variables.tf").read_text()
+    module = re.search(r"unknown setting\. Allowed: ([a-z_, ]+)\.", variables).group(1).split(", ")
+    write(repo, PROJECT, project_yaml(staging=staging_domain(["port: 3000", "bogus: 1"])))
+    allowed = message_at(check(repo), f"{DOMAIN}.bogus").split("Allowed here: ")[1].split(", ")
+    assert sorted(allowed) == sorted(module)

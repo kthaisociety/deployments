@@ -1,8 +1,9 @@
-"""Checks every project.yaml, every guide example and the template against schema/project.schema.yaml.
+"""Checks every project.yaml, the guide and the template against docs/project.schema.yaml.
 
-The schema is the one list of what project.yaml may contain: closed at every level, so an unknown key
+The schema is the list of what project.yaml may contain: closed at every level, so an unknown key
 fails. It is stricter than modules/project, which still accepts per-environment secrets, shared secrets,
-volumes and other environment names.
+volumes and other environment names. The one rule JSON Schema can't express, a name in two of env,
+secrets and shared, lives here (ADR-0001).
 """
 
 import ast
@@ -32,7 +33,7 @@ class Problem:
     """One thing wrong in one file.
 
     file: the file's path relative to the checked root, with forward slashes
-      (projects/<project>/project.yaml, templates/project.yaml or docs/project-yaml.md).
+      (projects/<project>/project.yaml, docs/project.template.yaml or docs/project-yaml.md).
     line: the 1-based line in that file. For a guide example, the line in the markdown, not in the
       block. For a missing key, the line of the map it's missing from; 1 for a missing top-level key
       or an empty file. None only when there is no line.
@@ -199,9 +200,8 @@ def _check_guide(path, validator) -> list[Problem]:
 def check(root: Path) -> list[Problem]:
     """Validate every file the check covers under root, and return every problem in it.
 
-    Covers projects/*/project.yaml, templates/project.yaml and every ```yaml block in
-    docs/project-yaml.md (each one a complete project.yaml; other fences aren't checked). Always
-    validates against this repo's schema/project.schema.yaml, wherever root is.
+    Covers projects/*/project.yaml, docs/project.template.yaml and docs/project-yaml.md. Always
+    validates against this repo's docs/project.schema.yaml, wherever root is.
 
     Guarantees:
     - Never raises on bad input: every fault is a Problem. An empty list means everything passes.
@@ -214,14 +214,24 @@ def check(root: Path) -> list[Problem]:
     - domains under defaults says it belongs under an environment.
     - secrets, shared or volumes under an environment says to declare the names under defaults
       and set per-environment values in OpenBao.
-    - A missing or null skeleton key (repo; defaults with env, secrets, shared and volumes;
-      environments with staging and production) is named, and a null one says to write {} or [].
+    - A missing or null skeleton key (repo; defaults with env, secrets and shared; environments
+      with staging and production) is named, and a null one says to write {} or []. volumes is
+      optional under defaults.
     - An environment other than staging or production names the two allowed.
-    - A wrong type names the expected type. env values may be strings, numbers or booleans.
+    - A wrong type names the expected type. An env value must be a string with no newline; a
+      number or boolean says to quote it.
+    - Within one environment, with its env merged over defaults.env, a name in two of env, secrets
+      and shared is a Problem at the env key when env is one of the two, otherwise at the shared
+      entry, and its message gives the other one's path.
     - A domain needs port, an integer from 1 to 65535. certificate_type is letsencrypt, none or
       custom (the message lists them). custom_cert_resolver is required with certificate_type
       custom and rejected otherwise. https: false allows only certificate_type none. path and
       internal_path start with /.
+    - The guide has exactly one reference example, fenced ```yaml: a complete project.yaml that
+      passes and uses every key the schema allows. No reference, or more than one, is a Problem,
+      and so is each key the reference leaves out, named in the message. Each ```yaml excerpt
+      block must be consecutive lines of the reference, compared without leading indentation; one
+      that isn't is a Problem at its opening fence's line. Other fences, such as ```text, aren't checked.
     """
     validator = Draft202012Validator(YAML(typ="safe").load(SCHEMA_PATH.read_text(encoding="utf-8")))
     problems = []
