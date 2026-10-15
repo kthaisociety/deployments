@@ -1,4 +1,4 @@
-"""Acceptance tests for #15: the project.yaml schema, guide and check."""
+"""Tests for check_project_yaml and scripts/check-project-yaml: project files, the guide and the template."""
 
 import os
 import re
@@ -244,7 +244,7 @@ def test_per_environment_secrets_point_to_defaults_and_openbao(repo, key, body):
     """secrets, shared or volumes under an environment says: names under defaults, values in OpenBao."""
     write(repo, PROJECT, project_yaml(staging=f"\n    {key}:{body}\n"))
     message = message_at(check(repo), f".environments.staging.{key}")
-    assert "defaults" in message and "OpenBao" in message
+    assert [w for w in ["defaults", "OpenBao"] if w not in message] == []
 
 
 @pytest.mark.parametrize(
@@ -272,14 +272,22 @@ def test_missing_skeleton_key_is_named(repo, removed, path, name):
     [
         ("  env: {}\n", ".defaults.env", "{}"),
         ("  secrets: []\n", ".defaults.secrets", "[]"),
+        ("  shared: {}\n", ".defaults.shared", "{}"),
         ("  volumes: {}\n", ".defaults.volumes", "{}"),
+        ("  staging: {}\n", ".environments.staging", "{}"),
     ],
-    ids=["env", "secrets", "volumes"],
+    ids=["env", "secrets", "shared", "volumes", "staging"],
 )
 def test_null_skeleton_key_says_write_empty(repo, line, path, empty):
     """A skeleton key left blank (null) says to write {} or [] when unused."""
     write(repo, PROJECT, MINIMAL.replace(line, line.split(":")[0] + ":\n"))
     assert empty in message_at(check(repo), path)
+
+
+def test_blank_repo_says_a_value_is_required(repo):
+    """repo left blank (null) says a value is required."""
+    write(repo, PROJECT, MINIMAL.replace("repo: example/demo\n", "repo:\n"))
+    assert "a value is required" in message_at(check(repo), ".repo")
 
 
 def test_domain_without_port_names_port(repo):
@@ -292,7 +300,7 @@ def test_extra_environment_names_the_two_allowed(repo):
     """An environment other than staging or production fails, naming the two allowed."""
     write(repo, PROJECT, MINIMAL + "  dev: {}\n")
     message = message_at(check(repo), ".environments.dev")
-    assert "staging" in message and "production" in message
+    assert [e for e in ["staging", "production"] if e not in message] == []
 
 
 # Values
@@ -411,12 +419,19 @@ def test_path_without_leading_slash_fails(repo, key):
 # Files and reporting
 
 
-def test_invalid_yaml_reports_parser_line_and_reason(repo):
-    """A file that isn't valid YAML gives one problem with no path, at the parser's line, with its reason."""
-    write(repo, PROJECT, "repo: example/demo\ndefaults:\n  env: {}\n\tsecrets: []\n")
-    problems = [p for p in check(repo) if p.file == PROJECT]
-    assert [(p.path, p.line) for p in problems] == [(None, 4)]
-    assert "cannot start any token" in problems[0].message
+NOT_YAML = "repo: example/demo\ndefaults:\n  env: {}\n\tsecrets: []\n"
+
+
+def test_invalid_yaml_reports_parser_line(repo):
+    """A file that isn't valid YAML gives one problem with no path, at the parser's line."""
+    write(repo, PROJECT, NOT_YAML)
+    assert [(p.path, p.line) for p in check(repo) if p.file == PROJECT] == [(None, 4)]
+
+
+def test_invalid_yaml_reports_parser_reason(repo):
+    """A file that isn't valid YAML gives the parser's reason."""
+    write(repo, PROJECT, NOT_YAML)
+    assert "cannot start any token" in message_at(check(repo), None)
 
 
 def test_invalid_yaml_does_not_stop_other_files(repo):
@@ -449,6 +464,12 @@ def test_broken_guide_example_reported_at_guide_line(repo):
     """A guide example that breaks the schema fails at its line in the markdown."""
     write(repo, GUIDE, f"# project.yaml\n\nIntro.\n\n```yaml\n{project_yaml(defaults='  secret: []\n')}```\n")
     assert (GUIDE, 12) in {(p.file, p.line) for p in check(repo)}
+
+
+def test_guide_reference_not_yaml_reported_at_guide_line(repo):
+    """A reference example that isn't valid YAML fails at the parser's line, counted in the markdown."""
+    write(repo, GUIDE, guide(("yaml", NOT_YAML)))
+    assert [(p.file, p.line) for p in check(repo)] == [(GUIDE, 7)]
 
 
 def test_guide_text_fence_is_not_checked(repo):
@@ -514,6 +535,12 @@ def test_excerpt_not_in_reference_fails_at_its_fence(repo):
     assert [(p.file, p.line) for p in check(repo)] == [(GUIDE, fence)]
 
 
+def test_template_breaking_schema_fails(repo):
+    """A template that breaks the schema fails at the offending key."""
+    write(repo, TEMPLATE, project_yaml(defaults="  secret: []\n"))
+    assert [(p.file, p.path) for p in check(repo)] == [(TEMPLATE, ".defaults.secret")]
+
+
 def test_empty_template_fails(repo):
     """An empty template fails the check."""
     write(repo, TEMPLATE, "")
@@ -535,6 +562,11 @@ def test_command_exits_zero_when_clean(repo):
     assert run_command(repo).returncode == 0
 
 
+def test_command_prints_no_problems_when_clean(repo):
+    """The command says so when nothing is wrong."""
+    assert run_command(repo).stdout.splitlines() == ["no problems"]
+
+
 def test_command_exits_one_on_problems(repo):
     """The command exits 1 when anything is wrong."""
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
@@ -547,6 +579,13 @@ def test_command_prints_problem_count(repo):
     assert run_command(repo).stdout.splitlines()[-1:] == ["1 problem in 1 file"]
 
 
+def test_command_prints_plural_count(repo):
+    """The count line uses plurals for more than one problem or file."""
+    write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
+    write(repo, "projects/other/project.yaml", project_yaml(top="name: other\n"))
+    assert run_command(repo).stdout.splitlines()[-1:] == ["2 problems in 2 files"]
+
+
 def test_command_prints_workflow_commands_in_ci(repo):
     """With GITHUB_ACTIONS=true each problem prints as a ::error workflow command."""
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
@@ -554,10 +593,23 @@ def test_command_prints_workflow_commands_in_ci(repo):
     assert f"::error file={PROJECT},line=7::.defaults.secret: " in out
 
 
+def test_command_omits_line_in_ci_when_problem_has_none(repo):
+    """With GITHUB_ACTIONS=true a problem with no line prints without line=."""
+    (repo / TEMPLATE).unlink()
+    out = run_command(repo, GITHUB_ACTIONS="true").stdout
+    assert f"::error file={TEMPLATE}::file is missing" in out.splitlines()
+
+
 def test_command_prints_file_line_locally(repo):
     """Outside GitHub Actions each problem prints as <file>:<line>: <path>: <message>."""
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
     assert f"{PROJECT}:7: .defaults.secret: " in run_command(repo).stdout
+
+
+def test_command_omits_line_locally_when_problem_has_none(repo):
+    """Outside GitHub Actions a problem with no line prints as <file>: <message>."""
+    (repo / TEMPLATE).unlink()
+    assert f"{TEMPLATE}: file is missing" in run_command(repo).stdout.splitlines()
 
 
 # This repo
@@ -596,10 +648,15 @@ def test_repo_passes_check():
 
 @pytest.mark.parametrize("area", GUIDE_AREAS)
 def test_guide_has_section_per_area(area):
-    """The guide has a ## section for each project.yaml area, with a yaml reference or excerpt in it."""
+    """The guide has a ## section for each project.yaml area."""
     sections = guide_sections()
     assert area in sections, sorted(sections)
-    assert any(line.strip().startswith("```yaml") for line in sections[area])
+
+
+@pytest.mark.parametrize("area", GUIDE_AREAS)
+def test_guide_section_shows_yaml(area):
+    """Each area's section holds a yaml reference or excerpt."""
+    assert any(line.strip().startswith("```yaml") for line in guide_sections().get(area, []))
 
 
 def test_schema_domain_settings_match_module(repo):
