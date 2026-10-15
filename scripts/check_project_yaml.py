@@ -254,6 +254,18 @@ def _check_guide(path, validator, schema) -> list[Problem]:
             for steps, key in _missing_reference_keys(ref_doc, schema, schema):
                 yaml_path = _yq(list(steps))
                 problems.append(Problem(GUIDE, ref_line, yaml_path, f"reference example is missing allowed key '{key}'"))
+            defaults = ref_doc.get("defaults", {}) if isinstance(ref_doc, dict) else {}
+            if isinstance(defaults, dict):
+                for key in ("env", "secrets", "shared", "volumes"):
+                    if key in defaults and defaults[key] in ({}, []):
+                        problems.append(
+                            Problem(
+                                GUIDE,
+                                ref_line,
+                                _yq(["defaults", key]),
+                                f"reference example's {key} must show an entry",
+                            )
+                        )
     ref_lines = [line.lstrip() for line in reference.splitlines()]
     for kind, line, block in blocks:
         if kind != "yaml excerpt":

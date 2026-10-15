@@ -19,8 +19,11 @@ defaults:
     LOG_LEVEL: info
   secrets:
     - SESSION_SECRET
-  shared: {}
-  volumes: {}
+  shared:
+    shared-config:
+      - SHARED_TOKEN
+  volumes:
+    /data: app-data
 environments:
   staging:
     env:
@@ -56,8 +59,11 @@ defaults:
     LOG_LEVEL: info
   secrets:
     - SESSION_SECRET
-  shared: {}
-  volumes: {}
+  shared:
+    shared-config:
+      - SHARED_TOKEN
+  volumes:
+    /data: app-data
 ```
 
 ## Env
@@ -88,7 +94,9 @@ environment live in OpenBao.
 same for both environments; values live in OpenBao.
 
 ```yaml excerpt
-  shared: {}
+  shared:
+    shared-config:
+      - SHARED_TOKEN
 ```
 
 ## Volumes
@@ -97,7 +105,8 @@ same for both environments; values live in OpenBao.
 better kept in a database.
 
 ```yaml excerpt
-  volumes: {}
+  volumes:
+    /data: app-data
 ```
 
 ## Environments
