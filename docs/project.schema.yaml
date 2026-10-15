@@ -14,7 +14,7 @@ properties:
   defaults:
     type: object
     additionalProperties: false
-    required: [env, secrets, shared, volumes]
+    required: [env, secrets, shared]
     properties:
       env:
         $ref: "#/$defs/env"
@@ -46,7 +46,8 @@ $defs:
   env:
     type: object
     additionalProperties:
-      type: [string, number, boolean]
+      type: string
+      pattern: "^[^\\r\\n]*$"
 
   environment:
     type: object

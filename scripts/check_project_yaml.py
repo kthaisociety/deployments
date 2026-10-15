@@ -20,8 +20,8 @@ from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMA_PATH = REPO_ROOT / "schema" / "project.schema.yaml"
-TEMPLATE = "templates/project.yaml"
+SCHEMA_PATH = REPO_ROOT / "docs" / "project.schema.yaml"
+TEMPLATE = "docs/project.template.yaml"
 GUIDE = "docs/project-yaml.md"
 PLAIN_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 TYPE_NAMES = {"array": "list", "object": "map"}
@@ -138,6 +138,8 @@ def _errors_to_findings(error, doc) -> list[tuple[list, int, str]]:
     if error.validator == "type":
         if error.instance is None:
             message = _blank_message(error.validator_value)
+        elif "env" in parent and isinstance(error.instance, (bool, int, float)):
+            message = f"expected string, got {_got(error.instance)}; quote this value"
         else:
             message = f"expected {_expected(error.validator_value)}, got {_got(error.instance)}"
     elif error.validator in ("minimum", "maximum"):
@@ -153,6 +155,8 @@ def _errors_to_findings(error, doc) -> list[tuple[list, int, str]]:
         message = f"must be {_or_list(error.validator_value)}, got {error.instance!r}"
     elif error.validator == "pattern" and error.validator_value == "^/":
         message = f"must start with /, got {error.instance!r}"
+    elif error.validator == "pattern" and "\\r\\n" in error.validator_value:
+        message = "must be a string without a newline"
     elif error.validator == "not":
         # custom_cert_resolver is `not: {}` under a certificate_type other than custom.
         message = "only allowed with certificate_type custom"
@@ -182,18 +186,140 @@ def _check_text(file, text, validator, offset=0) -> list[Problem]:
     return problems
 
 
-def _check_guide(path, validator) -> list[Problem]:
-    """Check every ```yaml block in the guide. Other fences, such as ```text, are not checked."""
+def _resolve_schema(schema, root_schema):
+    ref = schema.get("$ref")
+    if ref:
+        for part in ref.removeprefix("#/").split("/"):
+            root_schema = root_schema[part]
+        return root_schema
+    return schema
+
+
+def _missing_reference_keys(doc, schema, root_schema):
+    """Return properties never demonstrated in any matching object in the reference."""
+    observed = {}
+
+    def visit(value, candidate, path=()):
+        candidate = _resolve_schema(candidate, root_schema)
+        if not isinstance(value, dict) or candidate.get("type") != "object":
+            return
+        properties = candidate.get("properties", {})
+        if properties:
+            record = observed.setdefault(id(candidate), [candidate, set(), path])
+            record[1].update(key for key in value if key in properties)
+        for key, child_schema in properties.items():
+            if key in value:
+                visit(value[key], child_schema, path + (key,))
+        additional = candidate.get("additionalProperties")
+        if isinstance(additional, dict):
+            for key, child_value in value.items():
+                if key not in properties:
+                    visit(child_value, additional, path + (key,))
+
+    visit(doc, schema)
+    missing = []
+    for candidate, present, path in observed.values():
+        for key in candidate.get("properties", {}):
+            if key not in present:
+                missing.append((path + (key,), key))
+    return missing
+
+
+def _check_guide(path, validator, schema) -> list[Problem]:
+    """Check the one complete reference example and every excerpt in the guide."""
     problems = []
     lines = path.read_text(encoding="utf-8").splitlines()
-    start = None
+    blocks, start, fence = [], None, None
     for number, line in enumerate(lines, start=1):
-        if start is None and line.strip() == "```yaml":
+        if start is None and line.strip() in ("```yaml", "```yaml excerpt"):
             start = number
+            fence = line.strip()[3:].strip()
         elif start is not None and line.strip() == "```":
             block = "\n".join(lines[start : number - 1]) + "\n"
-            problems += _check_text(GUIDE, block, validator, offset=start)
+            blocks.append((fence, start, block))
             start = None
+    references = [(line, block) for kind, line, block in blocks if kind == "yaml"]
+    if len(references) != 1:
+        problems.append(Problem(GUIDE, 1, None, "guide must contain exactly one ```yaml reference example"))
+    reference = references[0][1] if len(references) == 1 else ""
+    if reference:
+        ref_line = references[0][0]
+        ref_problems = _check_text(GUIDE, reference, validator, offset=ref_line)
+        problems.extend(ref_problems)
+        try:
+            ref_doc = YAML(typ="rt").load(reference)
+        except MarkedYAMLError:
+            ref_doc = None
+        if ref_doc is not None:
+            for steps, key in _missing_reference_keys(ref_doc, schema, schema):
+                yaml_path = _yq(list(steps))
+                problems.append(Problem(GUIDE, ref_line, yaml_path, f"reference example is missing allowed key '{key}'"))
+    ref_lines = [line.lstrip() for line in reference.splitlines()]
+    for kind, line, block in blocks:
+        if kind != "yaml excerpt":
+            continue
+        excerpt_lines = [line.lstrip() for line in block.splitlines()]
+        found = any(ref_lines[i : i + len(excerpt_lines)] == excerpt_lines for i in range(max(1, len(ref_lines) - len(excerpt_lines) + 1)))
+        if not excerpt_lines or not found:
+            problems.append(Problem(GUIDE, line, None, "yaml excerpt must be consecutive lines from the reference example"))
+    return problems
+
+
+def _collision_problems(file, doc):
+    problems, seen = [], set()
+    defaults = doc.get("defaults", {}) if isinstance(doc, dict) else {}
+    defaults_env = defaults.get("env", {}) if isinstance(defaults, dict) and isinstance(defaults.get("env", {}), dict) else {}
+    secrets = defaults.get("secrets", []) if isinstance(defaults, dict) else []
+    if not isinstance(secrets, list):
+        secrets = []
+    shared = defaults.get("shared", {}) if isinstance(defaults, dict) else {}
+    secret_paths = {name: ["defaults", "secrets", i] for i, name in enumerate(secrets) if isinstance(name, str)}
+    shared_paths = {}
+    if isinstance(shared, dict):
+        for group, names in shared.items():
+            if isinstance(names, list):
+                for i, name in enumerate(names):
+                    if isinstance(name, str):
+                        shared_paths[name] = ["defaults", "shared", group, i]
+    environments = doc.get("environments", {}) if isinstance(doc, dict) else {}
+    envs = environments.items() if isinstance(environments, dict) else []
+    for env_name, env_config in [(None, {})] + list(envs):
+        env_paths = {name: ["defaults", "env", name] for name in defaults_env}
+        if env_name is not None and isinstance(env_config, dict):
+            override = env_config.get("env", {})
+            if isinstance(override, dict):
+                env_paths.update({name: ["environments", env_name, "env", name] for name in override})
+        places = {}
+        for name, path in env_paths.items():
+            places.setdefault(name, []).append(("env", path))
+        for name, path in secret_paths.items():
+            places.setdefault(name, []).append(("secrets", path))
+        for name, path in shared_paths.items():
+            places.setdefault(name, []).append(("shared", path))
+        for name, occurrences in places.items():
+            kinds = {kind for kind, _ in occurrences}
+            if len(kinds) < 2:
+                continue
+            env_occ = next(((kind, path) for kind, path in occurrences if kind == "env"), None)
+            if env_occ:
+                _, target_path = env_occ
+                others = [(kind, path) for kind, path in occurrences if kind != "env"]
+            else:
+                _, target_path = next((kind, path) for kind, path in occurrences if kind == "shared")
+                others = [(kind, path) for kind, path in occurrences if kind == "secrets"]
+            for _, other_path in others:
+                label = env_name or "defaults"
+                finding = (tuple(target_path), tuple(other_path))
+                if finding not in seen:
+                    seen.add(finding)
+                    problems.append(
+                        Problem(
+                            file,
+                            _line_at(doc, target_path),
+                            _yq(target_path),
+                            f"{name} is also declared at {_yq(other_path)} in {label}",
+                        )
+                    )
     return problems
 
 
@@ -233,11 +359,21 @@ def check(root: Path) -> list[Problem]:
       block must be consecutive lines of the reference, compared without leading indentation; one
       that isn't is a Problem at its opening fence's line. Other fences, such as ```text, aren't checked.
     """
-    validator = Draft202012Validator(YAML(typ="safe").load(SCHEMA_PATH.read_text(encoding="utf-8")))
+    schema = YAML(typ="safe").load(SCHEMA_PATH.read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
     problems = []
     for project in sorted(root.glob("projects/*/project.yaml")):
         rel = project.relative_to(root).as_posix()
-        problems += _check_text(rel, project.read_text(encoding="utf-8"), validator)
+        text = project.read_text(encoding="utf-8")
+        file_problems = _check_text(rel, text, validator)
+        problems += file_problems
+        if not any(p.file == rel and p.path is None for p in file_problems):
+            try:
+                doc = YAML(typ="rt").load(text)
+            except MarkedYAMLError:
+                doc = None
+            if isinstance(doc, dict):
+                problems += _collision_problems(rel, doc)
     template = root / TEMPLATE
     if template.is_file():
         problems += _check_text(TEMPLATE, template.read_text(encoding="utf-8"), validator)
@@ -245,7 +381,7 @@ def check(root: Path) -> list[Problem]:
         problems.append(Problem(TEMPLATE, None, None, "file is missing"))
     guide = root / GUIDE
     if guide.is_file():
-        problems += _check_guide(guide, validator)
+        problems += _check_guide(guide, validator, schema)
     else:
         problems.append(Problem(GUIDE, None, None, "file is missing"))
     return problems

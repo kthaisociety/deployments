@@ -30,6 +30,10 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 
 ## Adding a project
 
+For the `project.yaml` fields and a complete checked example, read the
+[project.yaml guide](docs/project-yaml.md). Start a new project from
+[the template](docs/project.template.yaml).
+
 1. `infrastructure`: one line in `terraform/openbao/projects.yaml`, `my-app: {}` (staging and
    production; add `shared: [...]` if it reads shared secrets). That creates its policies and empty
    secret paths. This repo's `check` fails, with that line, until it's there.
@@ -43,10 +47,8 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 
 ## Adding a domain
 
-1. In `projects/<project>/project.yaml`, under the environment (never `defaults`): `domains:`, keyed by
-   hostname. `port` (the container port Traefik forwards to) is required. Optional: `https`,
-   `certificate_type`, `custom_cert_resolver`, `path`, `internal_path`, `strip_path`, `enabled`,
-   `forward_auth_enabled`, `custom_entrypoint`.
+1. Add the domain under the environment in `projects/<project>/project.yaml`. See the
+   [project.yaml guide](docs/project-yaml.md) for the domain fields and examples.
 2. Left out: HTTPS on, with a Let's Encrypt certificate; everything else is Dokploy's default. A
    misspelt setting fails the plan instead of being ignored.
 3. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.
