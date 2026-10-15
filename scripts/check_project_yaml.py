@@ -25,7 +25,10 @@ TEMPLATE = "docs/project.template.yaml"
 GUIDE = "docs/project-yaml.md"
 PLAIN_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 TYPE_NAMES = {"array": "list", "object": "map"}
-SECRET_KEYS = ("secrets", "shared", "volumes")
+DEFAULTS_ONLY_KEYS = ("secrets", "shared", "volumes")
+MUST_SHOW_ENTRY = ("env", "secrets", "shared", "volumes")
+REFERENCE_FENCE = "yaml"
+EXCERPT_FENCE = "yaml excerpt"
 
 
 @dataclass(frozen=True)
@@ -84,9 +87,12 @@ def _or_list(words) -> str:
     return f"{', '.join(words[:-1])} or {words[-1]}"
 
 
+def _type_list(types) -> list[str]:
+    return [types] if isinstance(types, str) else types
+
+
 def _expected(types) -> str:
-    names = [types] if isinstance(types, str) else types
-    return _or_list(TYPE_NAMES.get(name, name) for name in names)
+    return _or_list(TYPE_NAMES.get(name, name) for name in _type_list(types))
 
 
 def _got(value) -> str:
@@ -104,7 +110,7 @@ def _got(value) -> str:
 
 
 def _blank_message(types) -> str:
-    names = [types] if isinstance(types, str) else types
+    names = _type_list(types)
     if "object" in names:
         return "is blank; write {} if unused"
     if "array" in names:
@@ -115,7 +121,7 @@ def _blank_message(types) -> str:
 def _unknown_key_message(parent, key, allowed) -> str:
     if parent == ["defaults"] and key == "domains":
         return "domains belong under an environment, not under defaults. A default domain gives every environment the same host."
-    if len(parent) == 2 and parent[0] == "environments" and key in SECRET_KEYS:
+    if len(parent) == 2 and parent[0] == "environments" and key in DEFAULTS_ONLY_KEYS:
         return f"{key} is declared under defaults, and each environment sets its values in OpenBao. Remove it here."
     return f"unknown key. Allowed here: {', '.join(allowed)}"
 
@@ -134,45 +140,52 @@ def _errors_to_findings(error, doc) -> list[tuple[list, int, str]]:
                 path = parent + [key]
                 findings.append((path, _line_at(doc, path), _unknown_key_message(parent, key, allowed)))
         return findings
+    return [(parent, _line_at(doc, parent), _value_message(error, parent))]
 
+
+def _value_message(error, parent) -> str:
+    """The message for a schema error about the value at parent, rather than about its keys."""
     if error.validator == "type":
         if error.instance is None:
-            message = _blank_message(error.validator_value)
-        elif "env" in parent and isinstance(error.instance, (bool, int, float)):
-            message = f"expected string, got {_got(error.instance)}; quote this value"
-        else:
-            message = f"expected {_expected(error.validator_value)}, got {_got(error.instance)}"
-    elif error.validator in ("minimum", "maximum"):
-        schema = error.schema
-        if "minimum" in schema and "maximum" in schema:
-            bounds = f"from {schema['minimum']} to {schema['maximum']}"
-        elif "minimum" in schema:
-            bounds = f"at least {schema['minimum']}"
-        else:
-            bounds = f"at most {schema['maximum']}"
-        message = f"must be {bounds}, got {error.instance}"
-    elif error.validator == "enum":
-        message = f"must be {_or_list(error.validator_value)}, got {error.instance!r}"
-    elif error.validator == "pattern" and error.validator_value == "^/":
-        message = f"must start with /, got {error.instance!r}"
-    elif error.validator == "pattern" and "\\r\\n" in error.validator_value:
-        message = "must be a string without a newline"
-    elif error.validator == "not":
-        # custom_cert_resolver is `not: {}` under a certificate_type other than custom.
-        message = "only allowed with certificate_type custom"
-    else:
-        message = error.message
-    return [(parent, _line_at(doc, parent), message)]
+            return _blank_message(error.validator_value)
+        if "env" in parent and isinstance(error.instance, (bool, int, float)):
+            return f"expected string, got {_got(error.instance)}; quote this value"
+        return f"expected {_expected(error.validator_value)}, got {_got(error.instance)}"
+    if error.validator in ("minimum", "maximum"):
+        return f"must be {_bounds(error.schema)}, got {error.instance}"
+    if error.validator == "enum":
+        return f"must be {_or_list(error.validator_value)}, got {error.instance!r}"
+    if error.validator == "pattern" and error.validator_value == "^/":
+        return f"must start with /, got {error.instance!r}"
+    if error.validator == "pattern" and "\\r\\n" in error.validator_value:
+        return "must be a string without a newline"
+    if error.validator == "not" and parent[-1:] == ["custom_cert_resolver"]:
+        return "only allowed with certificate_type custom"
+    return error.message
 
 
-def _check_text(file, text, validator, offset=0) -> list[Problem]:
-    """Parse one YAML document and return its problems. offset moves lines, for a block inside a guide."""
-    try:
-        doc = YAML(typ="rt").load(text)
-    except MarkedYAMLError as err:
-        mark = err.problem_mark
-        line = mark.line + 1 + offset if mark else None
-        return [Problem(file, line, None, f"not valid YAML: {err.problem}")]
+def _bounds(schema) -> str:
+    if "minimum" in schema and "maximum" in schema:
+        return f"from {schema['minimum']} to {schema['maximum']}"
+    if "minimum" in schema:
+        return f"at least {schema['minimum']}"
+    return f"at most {schema['maximum']}"
+
+
+def _load(text):
+    """Parse one YAML document, keeping line numbers. None for an empty one. Raises MarkedYAMLError."""
+    return YAML(typ="rt").load(text)
+
+
+def _not_yaml(file, error, offset=0) -> Problem:
+    """The one Problem for text that isn't valid YAML, at the parser's line and with its reason."""
+    mark = error.problem_mark
+    line = mark.line + 1 + offset if mark else None
+    return Problem(file, line, None, f"not valid YAML: {error.problem}")
+
+
+def _schema_problems(file, doc, validator, offset=0) -> list[Problem]:
+    """One Problem per offending path in doc. offset moves lines, for a block inside a guide."""
     if doc is None:
         doc = CommentedMap()
     problems, seen = [], set()
@@ -186,6 +199,32 @@ def _check_text(file, text, validator, offset=0) -> list[Problem]:
     return problems
 
 
+def _check_text(file, text, validator) -> list[Problem]:
+    """Parse one YAML file and return its schema problems."""
+    try:
+        doc = _load(text)
+    except MarkedYAMLError as err:
+        return [_not_yaml(file, err)]
+    return _schema_problems(file, doc, validator)
+
+
+def _check_project(file, text, validator) -> list[Problem]:
+    """Parse one project.yaml and return its schema problems, then its collisions."""
+    try:
+        doc = _load(text)
+    except MarkedYAMLError as err:
+        return [_not_yaml(file, err)]
+    return _schema_problems(file, doc, validator) + _collision_problems(file, doc)
+
+
+def _as_map(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
 def _resolve_schema(schema, root_schema):
     ref = schema.get("$ref")
     if ref:
@@ -196,8 +235,8 @@ def _resolve_schema(schema, root_schema):
 
 
 def _missing_reference_keys(doc, schema, root_schema):
-    """Return properties never demonstrated in any matching object in the reference."""
-    observed = {}
+    """Return (path, key) for each property never demonstrated in any matching object in the reference."""
+    first_seen, present = {}, {}
 
     def visit(value, candidate, path=()):
         candidate = _resolve_schema(candidate, root_schema)
@@ -205,8 +244,8 @@ def _missing_reference_keys(doc, schema, root_schema):
             return
         properties = candidate.get("properties", {})
         if properties:
-            record = observed.setdefault(id(candidate), [candidate, set(), path])
-            record[1].update(key for key in value if key in properties)
+            first_seen.setdefault(id(candidate), (candidate, path))
+            present.setdefault(id(candidate), set()).update(key for key in value if key in properties)
         for key, child_schema in properties.items():
             if key in value:
                 visit(value[key], child_schema, path + (key,))
@@ -217,122 +256,126 @@ def _missing_reference_keys(doc, schema, root_schema):
                     visit(child_value, additional, path + (key,))
 
     visit(doc, schema)
-    missing = []
-    for candidate, present, path in observed.values():
-        for key in candidate.get("properties", {}):
-            if key not in present:
-                missing.append((path + (key,), key))
-    return missing
+    return [
+        (path + (key,), key)
+        for schema_id, (candidate, path) in first_seen.items()
+        for key in candidate["properties"]
+        if key not in present[schema_id]
+    ]
+
+
+def _yaml_blocks(lines) -> list[tuple[str, int, str]]:
+    """Each ```yaml and ```yaml excerpt block as (fence, opening line, body). Other fences are skipped."""
+    blocks, start, fence = [], None, None
+    for number, line in enumerate(lines, start=1):
+        if start is None and line.strip() in (f"```{REFERENCE_FENCE}", f"```{EXCERPT_FENCE}"):
+            start, fence = number, line.strip()[3:]
+        elif start is not None and line.strip() == "```":
+            blocks.append((fence, start, "\n".join(lines[start : number - 1]) + "\n"))
+            start = None
+    return blocks
 
 
 def _check_guide(path, validator, schema) -> list[Problem]:
     """Check the one complete reference example and every excerpt in the guide."""
-    problems = []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    blocks, start, fence = [], None, None
-    for number, line in enumerate(lines, start=1):
-        if start is None and line.strip() in ("```yaml", "```yaml excerpt"):
-            start = number
-            fence = line.strip()[3:].strip()
-        elif start is not None and line.strip() == "```":
-            block = "\n".join(lines[start : number - 1]) + "\n"
-            blocks.append((fence, start, block))
-            start = None
-    references = [(line, block) for kind, line, block in blocks if kind == "yaml"]
+    blocks = _yaml_blocks(path.read_text(encoding="utf-8").splitlines())
+    references = [(line, body) for fence, line, body in blocks if fence == REFERENCE_FENCE]
+    excerpts = [(line, body) for fence, line, body in blocks if fence == EXCERPT_FENCE]
     if len(references) != 1:
-        problems.append(Problem(GUIDE, 1, None, "guide must contain exactly one ```yaml reference example"))
-    reference = references[0][1] if len(references) == 1 else ""
-    if reference:
-        ref_line = references[0][0]
-        ref_problems = _check_text(GUIDE, reference, validator, offset=ref_line)
-        problems.extend(ref_problems)
-        try:
-            ref_doc = YAML(typ="rt").load(reference)
-        except MarkedYAMLError:
-            ref_doc = None
-        if ref_doc is not None:
-            for steps, key in _missing_reference_keys(ref_doc, schema, schema):
-                yaml_path = _yq(list(steps))
-                problems.append(Problem(GUIDE, ref_line, yaml_path, f"reference example is missing allowed key '{key}'"))
-            defaults = ref_doc.get("defaults", {}) if isinstance(ref_doc, dict) else {}
-            if isinstance(defaults, dict):
-                for key in ("env", "secrets", "shared", "volumes"):
-                    if key in defaults and defaults[key] in ({}, []):
-                        problems.append(
-                            Problem(
-                                GUIDE,
-                                ref_line,
-                                _yq(["defaults", key]),
-                                f"reference example's {key} must show an entry",
-                            )
-                        )
-    ref_lines = [line.lstrip() for line in reference.splitlines()]
-    for kind, line, block in blocks:
-        if kind != "yaml excerpt":
-            continue
-        excerpt_lines = [line.lstrip() for line in block.splitlines()]
-        found = any(ref_lines[i : i + len(excerpt_lines)] == excerpt_lines for i in range(max(1, len(ref_lines) - len(excerpt_lines) + 1)))
-        if not excerpt_lines or not found:
-            problems.append(Problem(GUIDE, line, None, "yaml excerpt must be consecutive lines from the reference example"))
+        problem = Problem(GUIDE, 1, None, "guide must contain exactly one ```yaml reference example")
+        return [problem] + _excerpt_problems(excerpts, "")
+    ref_line, reference = references[0]
+    return _reference_problems(reference, ref_line, validator, schema) + _excerpt_problems(excerpts, reference)
+
+
+def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]:
+    """The reference's schema problems, each allowed key it leaves out, and each defaults key it leaves empty."""
+    try:
+        doc = _load(reference)
+    except MarkedYAMLError as err:
+        return [_not_yaml(GUIDE, err, ref_line)]
+    problems = _schema_problems(GUIDE, doc, validator, ref_line)
+    if doc is None:
+        return problems
+    for steps, key in _missing_reference_keys(doc, schema, schema):
+        problems.append(Problem(GUIDE, ref_line, _yq(list(steps)), f"reference example is missing allowed key '{key}'"))
+    defaults = _as_map(_as_map(doc).get("defaults"))
+    for key in MUST_SHOW_ENTRY:
+        if key in defaults and defaults[key] in ({}, []):
+            message = f"reference example's {key} must show an entry"
+            problems.append(Problem(GUIDE, ref_line, _yq(["defaults", key]), message))
     return problems
 
 
-def _collision_problems(file, doc):
+def _unindented(text) -> list[str]:
+    return [line.lstrip() for line in text.splitlines()]
+
+
+def _is_run_of(part, whole) -> bool:
+    """Whether part is a non-empty run of consecutive items in whole."""
+    return bool(part) and any(whole[i : i + len(part)] == part for i in range(len(whole) - len(part) + 1))
+
+
+def _excerpt_problems(excerpts, reference) -> list[Problem]:
+    """A Problem at the opening fence of each excerpt that isn't consecutive lines of the reference."""
+    ref_lines = _unindented(reference)
+    return [
+        Problem(GUIDE, line, None, "yaml excerpt must be consecutive lines from the reference example")
+        for line, body in excerpts
+        if not _is_run_of(_unindented(body), ref_lines)
+    ]
+
+
+def _collision_problems(file, doc) -> list[Problem]:
+    """A Problem for each name in two of env, secrets and shared, per environment, at the env key or shared entry.
+
+    A collision within defaults alone is reported once, as in defaults.
+    """
+    defaults = _as_map(_as_map(doc).get("defaults"))
+    secrets = {
+        name: ["defaults", "secrets", i] for i, name in enumerate(_as_list(defaults.get("secrets"))) if isinstance(name, str)
+    }
+    shared = {}
+    for group, names in _as_map(defaults.get("shared")).items():
+        for i, name in enumerate(_as_list(names)):
+            if isinstance(name, str):
+                shared[name] = ["defaults", "shared", group, i]
     problems, seen = [], set()
-    defaults = doc.get("defaults", {}) if isinstance(doc, dict) else {}
-    defaults_env = defaults.get("env", {}) if isinstance(defaults, dict) and isinstance(defaults.get("env", {}), dict) else {}
-    secrets = defaults.get("secrets", []) if isinstance(defaults, dict) else []
-    if not isinstance(secrets, list):
-        secrets = []
-    shared = defaults.get("shared", {}) if isinstance(defaults, dict) else {}
-    secret_paths = {name: ["defaults", "secrets", i] for i, name in enumerate(secrets) if isinstance(name, str)}
-    shared_paths = {}
-    if isinstance(shared, dict):
-        for group, names in shared.items():
-            if isinstance(names, list):
-                for i, name in enumerate(names):
-                    if isinstance(name, str):
-                        shared_paths[name] = ["defaults", "shared", group, i]
-    environments = doc.get("environments", {}) if isinstance(doc, dict) else {}
-    envs = environments.items() if isinstance(environments, dict) else []
-    for env_name, env_config in [(None, {})] + list(envs):
-        env_paths = {name: ["defaults", "env", name] for name in defaults_env}
-        if env_name is not None and isinstance(env_config, dict):
-            override = env_config.get("env", {})
-            if isinstance(override, dict):
-                env_paths.update({name: ["environments", env_name, "env", name] for name in override})
-        places = {}
-        for name, path in env_paths.items():
-            places.setdefault(name, []).append(("env", path))
-        for name, path in secret_paths.items():
-            places.setdefault(name, []).append(("secrets", path))
-        for name, path in shared_paths.items():
-            places.setdefault(name, []).append(("shared", path))
-        for name, occurrences in places.items():
-            kinds = {kind for kind, _ in occurrences}
-            if len(kinds) < 2:
+    for label, env in _env_scopes(doc, defaults):
+        for name, target, other in _clashes(env, secrets, shared):
+            finding = (tuple(target), tuple(other))
+            if finding in seen:
                 continue
-            env_occ = next(((kind, path) for kind, path in occurrences if kind == "env"), None)
-            if env_occ:
-                _, target_path = env_occ
-                others = [(kind, path) for kind, path in occurrences if kind != "env"]
-            else:
-                _, target_path = next((kind, path) for kind, path in occurrences if kind == "shared")
-                others = [(kind, path) for kind, path in occurrences if kind == "secrets"]
-            for _, other_path in others:
-                label = env_name or "defaults"
-                finding = (tuple(target_path), tuple(other_path))
-                if finding not in seen:
-                    seen.add(finding)
-                    problems.append(
-                        Problem(
-                            file,
-                            _line_at(doc, target_path),
-                            _yq(target_path),
-                            f"{name} is also declared at {_yq(other_path)} in {label}",
-                        )
-                    )
+            seen.add(finding)
+            message = f"{name} is also declared at {_yq(other)} in {label}"
+            problems.append(Problem(file, _line_at(doc, target), _yq(target), message))
     return problems
+
+
+def _env_scopes(doc, defaults):
+    """Yield (label, env name to path): defaults.env alone, then each environment's env merged over it."""
+    base = {name: ["defaults", "env", name] for name in _as_map(defaults.get("env"))}
+    yield "defaults", base
+    for env_name, config in _as_map(_as_map(doc).get("environments")).items():
+        override = _as_map(_as_map(config).get("env")) if env_name is not None else {}
+        yield env_name or "defaults", {**base, **{name: ["environments", env_name, "env", name] for name in override}}
+
+
+def _clashes(env, secrets, shared):
+    """Yield (name, where the problem sits, the other place) for each name declared in two places."""
+    places = {}
+    for kind, paths in (("env", env), ("secrets", secrets), ("shared", shared)):
+        for name, path in paths.items():
+            places.setdefault(name, {})[kind] = path
+    for name, found in places.items():
+        if len(found) < 2:
+            continue
+        if "env" in found:
+            target, others = found["env"], [found[kind] for kind in ("secrets", "shared") if kind in found]
+        else:
+            target, others = found["shared"], [found["secrets"]]
+        for other in others:
+            yield name, target, other
 
 
 def check(root: Path) -> list[Problem]:
@@ -367,7 +410,8 @@ def check(root: Path) -> list[Problem]:
       internal_path start with /.
     - The guide has exactly one reference example, fenced ```yaml: a complete project.yaml that
       passes and uses every key the schema allows. No reference, or more than one, is a Problem,
-      and so is each key the reference leaves out, named in the message. Each ```yaml excerpt
+      and so is each key the reference leaves out, named in the message. Its defaults env, secrets,
+      shared and volumes must each show an entry; an empty one is a Problem naming it. Each ```yaml excerpt
       block must be consecutive lines of the reference, compared without leading indentation; one
       that isn't is a Problem at its opening fence's line. Other fences, such as ```text, aren't checked.
     """
@@ -375,17 +419,7 @@ def check(root: Path) -> list[Problem]:
     validator = Draft202012Validator(schema)
     problems = []
     for project in sorted(root.glob("projects/*/project.yaml")):
-        rel = project.relative_to(root).as_posix()
-        text = project.read_text(encoding="utf-8")
-        file_problems = _check_text(rel, text, validator)
-        problems += file_problems
-        if not any(p.file == rel and p.path is None for p in file_problems):
-            try:
-                doc = YAML(typ="rt").load(text)
-            except MarkedYAMLError:
-                doc = None
-            if isinstance(doc, dict):
-                problems += _collision_problems(rel, doc)
+        problems += _check_project(project.relative_to(root).as_posix(), project.read_text(encoding="utf-8"), validator)
     template = root / TEMPLATE
     if template.is_file():
         problems += _check_text(TEMPLATE, template.read_text(encoding="utf-8"), validator)
@@ -397,6 +431,10 @@ def check(root: Path) -> list[Problem]:
     else:
         problems.append(Problem(GUIDE, None, None, "file is missing"))
     return problems
+
+
+def _count(number, noun) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
 
 
 def main(argv: list[str]) -> int:
@@ -421,9 +459,8 @@ def main(argv: list[str]) -> int:
     if not problems:
         print("no problems")
         return 0
-    count = len(problems)
-    files = len({problem.file for problem in problems})
-    print(f"{count} problem{'' if count == 1 else 's'} in {files} file{'' if files == 1 else 's'}")
+    files = {problem.file for problem in problems}
+    print(f"{_count(len(problems), 'problem')} in {_count(len(files), 'file')}")
     return 1
 
 

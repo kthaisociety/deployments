@@ -22,6 +22,9 @@ terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
   deploy.yml      # deploy requests: validate, commit the release.yaml line, apply, report (one run)
+docs/             # the project.yaml guide, schema and template; decision records in adr/ and pcr/
+scripts/          # check-project-yaml, the same project.yaml check `check` runs on every PR
+tests/            # pytest tests for scripts/
 ```
 
 A project's OpenBao side (its policies and empty secret paths) lives in
@@ -32,7 +35,8 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 
 For the `project.yaml` fields and a complete checked example, read the
 [project.yaml guide](docs/project-yaml.md). Start a new project from
-[the template](docs/project.template.yaml).
+[the template](docs/project.template.yaml). Run `scripts/check-project-yaml` before pushing; it
+reports the same problems the PR's `check` does.
 
 1. `infrastructure`: one line in `terraform/openbao/projects.yaml`, `my-app: {}` (staging and
    production; add `shared: [...]` if it reads shared secrets). That creates its policies and empty

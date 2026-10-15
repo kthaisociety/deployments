@@ -69,7 +69,8 @@ defaults:
 ## Env
 
 `env` maps variable names to single-line strings. Quote numbers and booleans so YAML does not change
-their values. Environment values override defaults with the same name.
+their values. Environment values override defaults with the same name. A name belongs to only one of
+`env`, `secrets` and `shared`, checked per environment after its `env` is merged over the defaults.
 
 ```yaml excerpt
   env:
