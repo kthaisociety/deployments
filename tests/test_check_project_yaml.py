@@ -390,6 +390,15 @@ def test_name_twice_in_one_list_fails(repo, key):
     assert "TOKEN more than once" in message_at(check(repo), f".defaults.{key}")
 
 
+@pytest.mark.parametrize("item", ["[TOKEN]", "{TOKEN: 1}"])
+def test_list_or_map_twice_in_one_list_fails(repo, item):
+    """The same list or map twice in secrets fails as a repeat and as a wrong type, without crashing the check."""
+    write(repo, PROJECT, MINIMAL.replace("  secrets: []", f"  secrets: [{item}, {item}]"))
+    problems = check(repo)
+    assert "more than once" in message_at(problems, ".defaults.secrets")
+    assert "expected string" in message_at(problems, ".defaults.secrets[0]")
+
+
 def test_unknown_certificate_type_lists_allowed(repo):
     """A certificate_type other than letsencrypt, none or custom fails, listing the three."""
     write(repo, PROJECT, project_yaml(staging=staging_domain(["port: 3000", "certificate_type: wildcard"])))

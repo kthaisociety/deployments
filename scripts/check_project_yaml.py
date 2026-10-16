@@ -167,8 +167,12 @@ def _value_message(error, parent) -> str:
     if error.validator == "not" and parent[-1:] == ["custom_cert_resolver"]:
         return "only allowed with certificate_type custom"
     if error.validator == "uniqueItems":
-        repeated = sorted({item for i, item in enumerate(error.instance) if item in error.instance[:i]}, key=str)
-        return f"lists {_or_list(str(item) for item in repeated)} more than once"
+        # A repeated list or map can't go in a set, and its own type error already names it.
+        items = error.instance
+        repeated = sorted({item for i, item in enumerate(items) if isinstance(item, str) and item in items[:i]})
+        if not repeated:
+            return "lists the same item more than once"
+        return f"lists {_or_list(repeated)} more than once"
     return error.message
 
 
