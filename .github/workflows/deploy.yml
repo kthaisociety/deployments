@@ -22,6 +22,7 @@ on:
         required: true
         type: choice
         options:
+          - lucid
           - onboarding-service
       environment:
         description: Environment.
