@@ -8,7 +8,10 @@ defaults:
     LOG_LEVEL: info
   secrets:
     - SESSION_SECRET
+    - DATABASE_URL
   shared: []
+  databases:
+    postgres: {}
   volumes: {}
 
 environments:

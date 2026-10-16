@@ -1,7 +1,8 @@
 # One project's Dokploy side: the Dokploy project and its environments, and per environment a provider
 # token (minted from OpenBao's dokploy-provider role), a vault provider holding it, the app and its
-# volumes. Env is the plain `env` values plus one generated OpenBao reference per secret and shared name
-# (a shared one reads the environment's shared store, secret/shared/<env>), so no app secret value is
+# volumes and databases (databases.tf). Env is the plain `env` values plus one generated OpenBao
+# reference per secret and shared name (a shared one reads the environment's shared store,
+# secret/shared/<env>; a database's name reads that database's secret), so no app secret value is
 # ever in git or state. (The provider tokens themselves are in this repo's state,
 # encrypted with its passphrase: whoever can decrypt that state can use them.)
 #
@@ -16,6 +17,9 @@ terraform {
     }
     dokploy = {
       source = "vanillauys/dokploy"
+    }
+    random = {
+      source = "hashicorp/random"
     }
   }
 }
@@ -103,7 +107,7 @@ locals {
     for e, c in local.environments : e => join("\n", concat(
       [for k in sort(keys(c.env)) : "${k}=${c.env[k]}"],
       [for k in c.secrets :
-      "${k}=$${{vault.${local.provider_name[e]}.${local.secret_path[e]}:${k}}}"],
+      "${k}=$${{vault.${local.provider_name[e]}.${lookup(local.database_secret[e], k, local.secret_path[e])}:${k}}}"],
       [for k in c.shared :
       "${k}=$${{vault.${local.provider_name[e]}.shared/${e}:${k}}}"],
     ))
@@ -129,7 +133,8 @@ resource "dokploy_application" "this" {
   auto_deploy      = false
   deploy_on_change = each.value.image != null
 
-  depends_on = [dokploy_vault_provider.this]
+  # The databases' secrets too: the first deploy must find every key it references.
+  depends_on = [dokploy_vault_provider.this, vault_kv_secret_v2.postgres, vault_kv_secret_v2.redis]
 
   lifecycle {
     precondition {
