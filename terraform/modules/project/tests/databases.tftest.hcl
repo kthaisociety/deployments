@@ -241,6 +241,65 @@ run "database_name_without_its_engine_is_rejected" {
   expect_failures = [var.config]
 }
 
+run "engine_name_in_env_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo         = "example/demo"
+      defaults     = { env = { DATABASE_URL = "old-url" }, secrets = ["PGHOST"], databases = { postgres = {} } }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "engine_name_in_an_environments_env_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo         = "example/demo"
+      defaults     = { secrets = ["PGHOST"], databases = { postgres = {} } }
+      environments = { staging = { env = { PGPASSWORD = "x" } }, production = {} }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "engine_name_in_shared_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo         = "example/demo"
+      defaults     = { secrets = ["REDIS_HOST"], shared = ["REDIS_URL"], databases = { redis = {} } }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "disabled_engines_name_in_env_is_allowed" {
+  command = plan
+
+  variables {
+    config = {
+      repo         = "example/demo"
+      defaults     = { env = { DATABASE_URL = "postgresql://elsewhere" }, databases = {} }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  assert {
+    condition     = strcontains(dokploy_application.this["staging"].env, "DATABASE_URL=postgresql://elsewhere")
+    error_message = "Without the engine, its names in env are ordinary values, such as an external database's URL."
+  }
+}
+
 run "engine_without_a_listed_name_is_rejected" {
   command = plan
 

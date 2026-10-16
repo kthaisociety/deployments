@@ -512,6 +512,14 @@ def test_database_name_without_its_engine_fails(repo):
     assert "postgres" in problems[0].message
 
 
+def test_database_name_problem_lands_on_its_own_entry(repo):
+    """A non-string entry before a database name doesn't move the database problem onto it."""
+    write(repo, PROJECT, with_databases("\n    - 42\n    - DATABASE_URL", "{}"))
+    problems = check(repo)
+    assert "postgres" in message_at(problems, ".defaults.secrets[1]")
+    assert [p.line for p in problems if p.path == ".defaults.secrets[1]"] == [6]
+
+
 def test_engine_without_a_listed_name_lists_them(repo):
     """An engine none of whose names are in secrets fails at the engine, listing its names."""
     write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {}, redis: {}}"))

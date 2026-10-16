@@ -450,10 +450,12 @@ def _database_problems(file, doc, offset=0) -> list[Problem]:
     """
     defaults = _as_map(_as_map(doc).get("defaults"))
     engines = {engine for engine in _as_map(defaults.get("databases")) if engine in DATABASE_KEYS}
-    secrets = [name for name in _as_list(defaults.get("secrets")) if isinstance(name, str)]
+    listed = _as_list(defaults.get("secrets"))
+    secrets = [name for name in listed if isinstance(name, str)]
     problems = []
-    for i, name in enumerate(secrets):
-        engine = KEY_ENGINE.get(name)
+    # The index into the list as written, so a problem lands on its own entry.
+    for i, name in enumerate(listed):
+        engine = KEY_ENGINE.get(name) if isinstance(name, str) else None
         if engine and engine not in engines:
             steps = ["defaults", "secrets", i]
             message = f"{name} is a setting {engine} writes, but {engine} isn't under defaults.databases. Add {engine}: {{}} there, or give this secret another name"
