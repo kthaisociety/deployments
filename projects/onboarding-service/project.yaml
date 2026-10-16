@@ -25,5 +25,8 @@ defaults:
 environments:
   # Its secrets are inert (a service account JSON with no real key, a dummy Mattermost token, its own
   # shared secret): it starts and resolves every reference, and can't touch a real account.
-  staging: {}
+  # Redis: generated REDIS_* settings at secret/onboarding-service/staging/redis. The app does not
+  # consume Redis yet; staging exercises provisioning and secret resolution first.
+  staging:
+    redis: {enabled: true}
   production: {}
