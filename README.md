@@ -17,7 +17,7 @@ projects/<project>/
   project.yaml    # config, secret names, environments (staging, production)
   release.yaml    # the image each environment runs, tag@digest; written by the deploy bot
 terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
-  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes, domains
+  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes, domains, Redis
 .github/workflows/
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
@@ -26,7 +26,8 @@ terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
 
 A project's OpenBao side (its policies and empty secret paths) lives in
 [kthaisociety/infrastructure](https://github.com/kthaisociety/infrastructure)'s `terraform/openbao`:
-policies decide what a token can read, so this repo's CI can't write them. It only mints tokens.
+policies decide what a token can read, so this repo's CI can't write them. It mints provider tokens and,
+once the database policy is applied, writes generated Redis credentials to the paths below.
 
 ## Adding a project
 
@@ -50,6 +51,46 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 2. Left out: HTTPS on, with a Let's Encrypt certificate; everything else is Dokploy's default. A
    misspelt setting fails the plan instead of being ignored.
 3. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.
+
+## Adding Redis
+
+Declare Redis under `defaults` for every environment, or under one environment. Only `enabled` and
+`image` are accepted. Settings merge from defaults to the environment; an omitted block in both means
+no Redis. An empty map enables it too, matching the Postgres design in
+[deployments#17](https://github.com/kthaisociety/deployments/pull/17).
+
+```yaml
+defaults:
+  redis: {enabled: true, image: "redis:7-alpine"}
+environments:
+  staging:
+    redis: {image: "redis:7.4-alpine"}  # overrides only the image
+  production:
+    redis: {enabled: false}             # does not create Redis in this environment
+```
+
+For just staging, leave Redis out of `defaults` and add `redis: {enabled: true}` to `staging`.
+`enabled` defaults to `true`, and `image` defaults to `redis:7-alpine`. Each selected environment gets
+its own internal Dokploy Redis service, with prefix `<project>-<env>-redis`; port 6379 stays internal.
+
+The app reads `REDIS_URL`, or the individual `REDIS_HOST`, `REDIS_PORT` and `REDIS_PASSWORD` settings.
+Do not add these to `env` or `secrets`: the module adds all four as references to
+`secret/<project>/<env>/redis`. The generated password is stored separately, once, at
+`secret/<project>/<env>/redis-password` and read back before being sent to Redis. Generated credentials
+only pass through ephemeral sources and write-only fields, so their values do not enter git, plans,
+state or the app's configured env in Dokploy. The running app resolves the references when deployed.
+Redis's host name also appears in the `projects` output under `apps.<env>.redis`.
+
+Redis and both secrets have `prevent_destroy`. Removing or disabling Redis after creation fails the
+plan; deletion requires an explicitly reviewed `removed` block. Password rotation is not implemented:
+do not bump either write-only password version independently.
+
+**Before merging:** the OpenBao policy must allow deployments CI to write/read the two Redis paths
+and `dokploy-project-<project>-<env>` to read the app-facing secret. As reviewed at commit `0abcd8f`,
+[infrastructure#25](https://github.com/kthaisociety/infrastructure/pull/25) only grants
+`secret/<project>/<env>/database/*`; it does not cover these `/redis` and `/redis-password` paths.
+Align and apply the policies before merging this implementation. Postgres remains separate work in
+PR #17; this branch adds Redis only.
 
 ## Rules
 

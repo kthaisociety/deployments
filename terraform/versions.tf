@@ -9,7 +9,12 @@ terraform {
     dokploy = {
       source = "vanillauys/dokploy"
       # 1.8 targets Dokploy v0.30.8, the version we run.
-      version = "~> 1.8.0"
+      version = "1.8.0"
+    }
+    # Ephemeral passwords never enter the plan or state.
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.7"
     }
   }
 

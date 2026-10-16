@@ -14,7 +14,11 @@ terraform {
       source = "hashicorp/vault"
     }
     dokploy = {
-      source = "vanillauys/dokploy"
+      source  = "vanillauys/dokploy"
+      version = "1.8.0"
+    }
+    random = {
+      source = "hashicorp/random"
     }
   }
 }
@@ -31,6 +35,9 @@ locals {
       shared  = merge(try(local.defaults.shared, {}), try(c.shared, {}))
       volumes = merge(try(local.defaults.volumes, {}), try(c.volumes, {}))
       domains = try(c.domains, {})
+      # Absent/null in both: no Redis. Otherwise merge settings, with the environment taking priority.
+      redis = (try(local.defaults.redis, null) == null && try(c.redis, null) == null ? null :
+      merge(coalesce(try(local.defaults.redis, null), {}), coalesce(try(c.redis, null), {})))
       # Required for every environment (check enforces it too): a missing line must fail, not quietly
       # read as "no image".
       image = var.release[e]
@@ -97,6 +104,95 @@ resource "dokploy_vault_provider" "this" {
   verify_connection = true
 }
 
+# Redis credentials follow the Postgres design in deployments#17. The password only passes through
+# ephemeral values and write-only fields. Applications receive OpenBao references, never the values.
+#
+# Write the password once, then read it back before creating Redis. If an apply fails after the write,
+# a retry must use the stored password, not the new value from the ephemeral generator.
+# The app-facing secret follows Redis because its internal host name is assigned at creation.
+# Removing Redis or either secret requires a deliberate removed block, not a project.yaml edit alone.
+locals {
+  redis = {
+    for e, c in local.environments : e => c.redis
+    if c.redis == null ? false : try(c.redis.enabled, true)
+  }
+  redis_keys = ["REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_URL"]
+}
+
+ephemeral "random_password" "redis" {
+  for_each = local.redis
+  length   = 32
+  # Letters and digits are safe in REDIS_URL without escaping.
+  special = false
+}
+
+resource "vault_kv_secret_v2" "redis_password" {
+  for_each = local.redis
+  mount    = "secret"
+  name     = "${local.secret_path[each.key]}/redis-password"
+  data_json_wo = jsonencode({
+    password = ephemeral.random_password.redis[each.key].result
+  })
+  # Written once. Changing only OpenBao would leave Redis using its old password.
+  data_json_wo_version = 1
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+ephemeral "vault_kv_secret_v2" "redis_password" {
+  for_each = local.redis
+  mount    = "secret"
+  name     = vault_kv_secret_v2.redis_password[each.key].name
+
+  depends_on = [vault_kv_secret_v2.redis_password]
+}
+
+resource "dokploy_redis" "this" {
+  for_each        = local.redis
+  name            = "${var.name}-redis"
+  app_name_prefix = "${var.name}-${each.key}-redis"
+  environment_id  = local.environment_ids[each.key]
+  docker_image    = try(each.value.image, "redis:7-alpine")
+
+  database_password_wo         = ephemeral.vault_kv_secret_v2.redis_password[each.key].data.password
+  database_password_wo_version = 1
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+locals {
+  # Hash only non-secret settings so a new host rewrites the app-facing secret without exposing values.
+  redis_settings = {
+    for e, _ in local.redis : e => {
+      REDIS_HOST = dokploy_redis.this[e].app_name
+      REDIS_PORT = "6379"
+    }
+  }
+}
+
+resource "vault_kv_secret_v2" "redis" {
+  for_each = local.redis
+  mount    = "secret"
+  name     = "${local.secret_path[each.key]}/redis"
+  data_json_wo = jsonencode(merge(local.redis_settings[each.key], {
+    REDIS_PASSWORD = ephemeral.vault_kv_secret_v2.redis_password[each.key].data.password
+    REDIS_URL = format("redis://:%s@%s:%s",
+      ephemeral.vault_kv_secret_v2.redis_password[each.key].data.password,
+      local.redis_settings[each.key].REDIS_HOST,
+      local.redis_settings[each.key].REDIS_PORT,
+    )
+  }))
+  data_json_wo_version = parseint(substr(sha256(jsonencode(local.redis_settings[each.key])), 0, 8), 16)
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 locals {
   env_lines = {
     for e, c in local.environments : e => join("\n", concat(
@@ -105,6 +201,8 @@ locals {
       "${k}=$${{vault.${local.provider_name[e]}.${local.secret_path[e]}:${k}}}"],
       flatten([for name, ks in c.shared : [for k in ks :
       "${k}=$${{vault.${local.provider_name[e]}.shared/${name}/${e}:${k}}}"]]),
+      [for k in(contains(keys(local.redis), e) ? local.redis_keys : []) :
+      "${k}=$${{vault.${local.provider_name[e]}.${local.secret_path[e]}/redis:${k}}}"],
     ))
   }
 }
@@ -128,7 +226,8 @@ resource "dokploy_application" "this" {
   auto_deploy      = false
   deploy_on_change = each.value.image != null
 
-  depends_on = [dokploy_vault_provider.this]
+  # Every Redis reference must exist before the application's first deployment.
+  depends_on = [dokploy_vault_provider.this, vault_kv_secret_v2.redis]
 
   lifecycle {
     precondition {

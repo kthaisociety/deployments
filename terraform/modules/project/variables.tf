@@ -32,6 +32,35 @@ variable "config" {
     ]))
     error_message = "A domain in project.yaml has an unknown setting. Allowed: port, https, certificate_type, custom_cert_resolver, path, internal_path, strip_path, enabled, forward_auth_enabled, custom_entrypoint."
   }
+  validation {
+    condition = alltrue(flatten([
+      for c in concat([try(var.config.defaults, {})], values(var.config.environments)) : [
+        for k in try(keys(c.redis), []) : contains(["enabled", "image"], k)
+      ]
+    ]))
+    error_message = "redis in project.yaml has an unknown setting. Allowed: enabled, image."
+  }
+  validation {
+    condition = alltrue([
+      for c in concat([try(var.config.defaults, {})], values(var.config.environments)) :
+      try(c.redis, null) == null ? true : can(keys(c.redis))
+    ])
+    error_message = "redis in project.yaml must be a settings map, for example redis: {enabled: true}."
+  }
+  validation {
+    condition = alltrue([
+      for c in concat([try(var.config.defaults, {})], values(var.config.environments)) :
+      try(c.redis.enabled, true) == true || try(c.redis.enabled, true) == false
+    ])
+    error_message = "redis.enabled in project.yaml must be true or false."
+  }
+  validation {
+    condition = alltrue([
+      for c in concat([try(var.config.defaults, {})], values(var.config.environments)) :
+      !can(c.redis.image) ? true : try(c.redis.image == tostring(c.redis.image) && trimspace(c.redis.image) != "", false)
+    ])
+    error_message = "redis.image in project.yaml must be a non-empty image name."
+  }
 }
 
 variable "release" {
