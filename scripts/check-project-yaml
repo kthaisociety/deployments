@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # The project.yaml check, the same one the required check runs on every PR:
 #   scripts/check-project-yaml [root]
-# Sets up .venv from requirements.txt on first run, then runs check_project_yaml.py. Exit code 0 with
-# no problems, 1 otherwise.
+# Sets up .venv from requirements.txt until an install succeeds, and again when requirements.txt
+# changes, then runs check_project_yaml.py. Exit code 0 with no problems, 1 otherwise.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 venv="$repo/.venv"
-if [ ! -x "$venv/bin/python" ]; then
+installed="$venv/installed-requirements.txt"
+if ! cmp -s "$repo/requirements.txt" "$installed"; then
   python3 -m venv "$venv"
   "$venv/bin/pip" install --quiet -r "$repo/requirements.txt"
+  cp "$repo/requirements.txt" "$installed"
 fi
 exec "$venv/bin/python" "$repo/scripts/check_project_yaml.py" "$@"
