@@ -71,6 +71,18 @@ variable "config" {
     ])
     error_message = "A database under defaults.databases has none of its settings in defaults.secrets, so the app can't reach it. List the ones it reads: ${join("; ", [for engine, ks in local.database_keys : "${engine}: ${join(", ", ks)}"])}."
   }
+  # An enabled engine's name in env or shared would give the app that value instead of the database's.
+  validation {
+    condition = alltrue(flatten([
+      for engine in keys(try(var.config.defaults.databases, {})) : [
+        for c in concat([try(var.config.defaults, {})], values(var.config.environments)) : [
+          for k in try(local.database_keys[engine], []) :
+          !contains(keys(try(c.env, {})), k) && !contains(try(c.shared, []), k)
+        ]
+      ]
+    ]))
+    error_message = "env or shared in project.yaml sets a name an enabled database writes. List it in defaults.secrets instead: the app gets it from the database's secret in OpenBao."
+  }
 }
 
 variable "release" {
