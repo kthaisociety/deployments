@@ -558,6 +558,13 @@ def test_excerpt_not_in_reference_fails_at_its_fence(repo):
     assert [(p.file, p.line) for p in check(repo)] == [(GUIDE, fence)]
 
 
+def test_unclosed_excerpt_fails_at_its_fence(repo):
+    """A ```yaml excerpt block with no closing fence before the guide ends fails at its opening fence's line."""
+    write(repo, GUIDE, guide(("yaml", FULL)) + "\n```yaml excerpt\nport: 4000\n")
+    fence = 1 + 1 + 1 + FULL.count("\n") + 1 + 1 + 1
+    assert [(p.file, p.line) for p in check(repo)] == [(GUIDE, fence)]
+
+
 def test_template_breaking_schema_fails(repo):
     """A template that breaks the schema fails at the offending key."""
     write(repo, TEMPLATE, project_yaml(defaults="  secret: []\n"))

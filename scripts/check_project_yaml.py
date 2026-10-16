@@ -310,8 +310,9 @@ def _missing_reference_keys(doc, schema, root_schema):
     return missing + [(path, f"reference example's {path[-1]} must show an entry") for path in unshown.values()]
 
 
-def _yaml_blocks(lines) -> list[tuple[str, int, str]]:
-    """Each ```yaml and ```yaml excerpt block as (fence, opening line, body). Other fences are skipped."""
+def _yaml_blocks(lines) -> tuple[list[tuple[str, int, str]], int | None]:
+    """Each ```yaml and ```yaml excerpt block as (fence, opening line, body), and the opening line of a last
+    block the guide never closes. Other fences are skipped."""
     blocks, start, fence = [], None, None
     for number, line in enumerate(lines, start=1):
         if start is None and line.strip() in (f"```{REFERENCE_FENCE}", f"```{EXCERPT_FENCE}"):
@@ -319,19 +320,24 @@ def _yaml_blocks(lines) -> list[tuple[str, int, str]]:
         elif start is not None and line.strip() == "```":
             blocks.append((fence, start, "\n".join(lines[start : number - 1]) + "\n"))
             start = None
-    return blocks
+    return blocks, start
 
 
 def _check_guide(path, validator, schema) -> list[Problem]:
-    """Check the one complete reference example and every excerpt in the guide."""
-    blocks = _yaml_blocks(path.read_text(encoding="utf-8").splitlines())
+    """Check the one complete reference example and every excerpt in the guide, and that each block closes."""
+    blocks, unclosed = _yaml_blocks(path.read_text(encoding="utf-8").splitlines())
+    problems = [] if unclosed is None else [Problem(GUIDE, unclosed, None, "yaml block has no closing ``` fence")]
     references = [(line, body) for fence, line, body in blocks if fence == REFERENCE_FENCE]
     excerpts = [(line, body) for fence, line, body in blocks if fence == EXCERPT_FENCE]
     if len(references) != 1:
         problem = Problem(GUIDE, 1, None, "guide must contain exactly one ```yaml reference example")
-        return [problem] + _excerpt_problems(excerpts, "")
+        return problems + [problem] + _excerpt_problems(excerpts, "")
     ref_line, reference = references[0]
-    return _reference_problems(reference, ref_line, validator, schema) + _excerpt_problems(excerpts, reference)
+    return (
+        problems
+        + _reference_problems(reference, ref_line, validator, schema)
+        + _excerpt_problems(excerpts, reference)
+    )
 
 
 def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]:
