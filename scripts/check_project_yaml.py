@@ -7,6 +7,7 @@ in two of env, secrets and shared, and a domain's host and path declared twice a
 """
 
 import ast
+import datetime
 import json
 import os
 import re
@@ -17,7 +18,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
-from ruamel.yaml.error import MarkedYAMLError
+from ruamel.yaml.error import YAMLError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "docs" / "project.schema.yaml"
@@ -70,7 +71,9 @@ def _line_at(doc, steps) -> int:
     line, node = 1, doc
     for step in steps:
         if isinstance(node, CommentedMap) and step in node:
-            line = node.lc.key(step)[0] + 1
+            # A key merged in with <<: *anchor has no line of its own: keep the map's.
+            position = (node.lc.data or {}).get(step)
+            line = position[0] + 1 if position else line
             node = node[step]
         elif isinstance(node, CommentedSeq) and isinstance(step, int) and step < len(node):
             line = node.lc.item(step)[0] + 1
@@ -104,6 +107,8 @@ def _got(value) -> str:
         return "number"
     if isinstance(value, list):
         return "list"
+    if isinstance(value, datetime.date):
+        return "date"
     if isinstance(value, dict):
         return "map"
     return type(value).__name__
@@ -148,7 +153,7 @@ def _value_message(error, parent) -> str:
     if error.validator == "type":
         if error.instance is None:
             return _blank_message(error.validator_value)
-        if "env" in parent and isinstance(error.instance, (bool, int, float)):
+        if _is_env_value(parent) and not isinstance(error.instance, (dict, list)):
             return f"expected string, got {_got(error.instance)}; quote this value"
         return f"expected {_expected(error.validator_value)}, got {_got(error.instance)}"
     if error.validator in ("minimum", "maximum"):
@@ -167,6 +172,11 @@ def _value_message(error, parent) -> str:
     return error.message
 
 
+def _is_env_value(parent) -> bool:
+    """Whether parent is a value inside an env map, rather than the map itself."""
+    return parent[:-1] == ["defaults", "env"] or (len(parent) == 4 and parent[0] == "environments" and parent[2] == "env")
+
+
 def _bounds(schema) -> str:
     if "minimum" in schema and "maximum" in schema:
         return f"from {schema['minimum']} to {schema['maximum']}"
@@ -176,15 +186,37 @@ def _bounds(schema) -> str:
 
 
 def _load(text):
-    """Parse one YAML document, keeping line numbers. None for an empty one. Raises MarkedYAMLError."""
+    """Parse one YAML document, keeping line numbers. None for an empty one. Raises YAMLError."""
     return YAML(typ="rt").load(text)
 
 
-def _not_yaml(file, error, offset=0) -> Problem:
-    """The one Problem for text that isn't valid YAML, at the parser's line and with its reason."""
-    mark = error.problem_mark
-    line = mark.line + 1 + offset if mark else None
-    return Problem(file, line, None, f"not valid YAML: {error.problem}")
+def _not_yaml(file, error, text, offset=0) -> Problem:
+    """The one Problem for text that isn't valid YAML, at the parser's line and with its reason.
+
+    Most parser errors carry a mark. One from the reader, such as for a control character, has only
+    a position in text.
+    """
+    mark = getattr(error, "problem_mark", None)
+    position = getattr(error, "position", None)
+    if mark:
+        line = mark.line + 1 + offset
+    elif position is not None:
+        line = text.count("\n", 0, position) + 1 + offset
+    else:
+        line = None
+    reason = getattr(error, "problem", None) or str(error).splitlines()[0]
+    return Problem(file, line, None, f"not valid YAML: {reason}")
+
+
+def _read(path, file) -> tuple[str | None, list[Problem]]:
+    """The file's text, or None and a Problem at the first byte that isn't UTF-8."""
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8"), []
+    except UnicodeDecodeError as err:
+        line = data.count(b"\n", 0, err.start) + 1
+        message = f"not UTF-8 text: byte 0x{data[err.start]:02x} can't be read. Save the file as UTF-8"
+        return None, [Problem(file, line, None, message)]
 
 
 def _yaml_text(key) -> str:
@@ -233,13 +265,12 @@ def _schema_problems(file, doc, validator, offset=0) -> list[Problem]:
     return problems
 
 
-def _check_text(file, text, validator) -> list[Problem]:
-    """Parse one YAML file and return its schema problems."""
-    try:
-        doc = _load(text)
-    except MarkedYAMLError as err:
-        return [_not_yaml(file, err)]
-    return _key_problems(file, doc) or _schema_problems(file, doc, validator)
+def _read_doc(root, file) -> tuple[str | None, list[Problem]]:
+    """The template's or the guide's text, or None and a Problem when it's missing or not UTF-8."""
+    path = root / file
+    if not path.is_file():
+        return None, [Problem(file, None, None, "file is missing")]
+    return _read(path, file)
 
 
 def _check_project(file, text, validator) -> tuple[list[Problem], object]:
@@ -247,8 +278,8 @@ def _check_project(file, text, validator) -> tuple[list[Problem], object]:
     The file is None when it isn't YAML or has a key the other checks wait on."""
     try:
         doc = _load(text)
-    except MarkedYAMLError as err:
-        return [_not_yaml(file, err)], None
+    except YAMLError as err:
+        return [_not_yaml(file, err, text)], None
     problems = _key_problems(file, doc)
     if problems:
         return problems, None
@@ -335,9 +366,9 @@ def _yaml_blocks(lines) -> tuple[list[tuple[str, int, str]], int | None]:
     return blocks, start
 
 
-def _check_guide(path, validator, schema) -> list[Problem]:
+def _check_guide(text, validator, schema) -> list[Problem]:
     """Check the one complete reference example and every excerpt in the guide, and that each block closes."""
-    blocks, unclosed = _yaml_blocks(path.read_text(encoding="utf-8").splitlines())
+    blocks, unclosed = _yaml_blocks(text.splitlines())
     problems = [] if unclosed is None else [Problem(GUIDE, unclosed, None, "yaml block has no closing ``` fence")]
     references = [(line, body) for fence, line, body in blocks if fence == REFERENCE_FENCE]
     excerpts = [(line, body) for fence, line, body in blocks if fence == EXCERPT_FENCE]
@@ -356,8 +387,8 @@ def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]
     """The reference's schema problems, each allowed key it leaves out, and each defaults key it leaves empty."""
     try:
         doc = _load(reference)
-    except MarkedYAMLError as err:
-        return [_not_yaml(GUIDE, err, ref_line)]
+    except YAMLError as err:
+        return [_not_yaml(GUIDE, err, reference, ref_line)]
     problems = _key_problems(GUIDE, doc, ref_line)
     if problems:
         return problems
@@ -471,8 +502,9 @@ def check(root: Path) -> list[Problem]:
     Guarantees:
     - Never raises on bad input: every fault is a Problem. An empty list means everything passes.
     - Reports every problem in every file in one call. A file that isn't valid YAML (including a
-      duplicate key) gives one Problem with the parser's line and reason, and the other files are
-      still checked.
+      duplicate key or a control character) gives one Problem with the parser's line and reason,
+      and so does a file that isn't UTF-8, at the first bad byte's line. The other files are still
+      checked.
     - One Problem per offending key.
     - A key YAML reads as a number, boolean, null or date says to quote it, and the file's other
       checks wait until it's fixed: the schema sees every key as a string and can't catch these.
@@ -487,10 +519,10 @@ def check(root: Path) -> list[Problem]:
       optional under defaults.
     - An environment other than staging or production names the two allowed.
     - A wrong type names the expected type. An env value must be a string with no newline; a
-      number or boolean says to quote it.
-    - Within one environment, with its env merged over defaults.env, a name in two of env, secrets
-      and shared is a Problem at the env key when env is one of the two, otherwise at the shared
-      entry, and its message gives the other one's path.
+      number, boolean or date says to quote it.
+    - Within one environment of a project or the template, with its env merged over defaults.env,
+      a name in two of env, secrets and shared is a Problem at the env key when env is one of the
+      two, otherwise at the shared entry, and its message gives the other one's path.
     - A name listed twice in secrets, or twice in shared, is a Problem naming it.
     - A domain needs port, an integer from 1 to 65535. certificate_type is letsencrypt, none or
       custom (the message lists them). custom_cert_resolver is required with certificate_type
@@ -511,20 +543,16 @@ def check(root: Path) -> list[Problem]:
     problems, docs = [], []
     for project in sorted(root.glob("projects/*/project.yaml")):
         file = project.relative_to(root).as_posix()
-        found, doc = _check_project(file, project.read_text(encoding="utf-8"), validator)
+        text, found = _read(project, file)
+        if text is not None:
+            found, doc = _check_project(file, text, validator)
+            docs.append((file, doc))
         problems += found
-        docs.append((file, doc))
     problems += _domain_problems(docs)
-    template = root / TEMPLATE
-    if template.is_file():
-        problems += _check_text(TEMPLATE, template.read_text(encoding="utf-8"), validator)
-    else:
-        problems.append(Problem(TEMPLATE, None, None, "file is missing"))
-    guide = root / GUIDE
-    if guide.is_file():
-        problems += _check_guide(guide, validator, schema)
-    else:
-        problems.append(Problem(GUIDE, None, None, "file is missing"))
+    text, found = _read_doc(root, TEMPLATE)
+    problems += found if text is None else _check_project(TEMPLATE, text, validator)[0]
+    text, found = _read_doc(root, GUIDE)
+    problems += found if text is None else _check_guide(text, validator, schema)
     return problems
 
 
@@ -532,12 +560,18 @@ def _count(number, noun) -> str:
     return f"{number} {noun}{'' if number == 1 else 's'}"
 
 
+def _escape(text, property=False) -> str:
+    """text made safe for a workflow command: %, CR and LF always, and , and : in a property such as file=."""
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(",", "%2C").replace(":", "%3A") if property else text
+
+
 def main(argv: list[str]) -> int:
     """scripts/check-project-yaml [root]: print every problem under root (default: the repo root).
 
     One line per problem, then a count line such as "3 problems in 2 files". With
     GITHUB_ACTIONS=true each problem is a workflow command,
-    ::error file=<file>,line=<line>::<path>: <message>, so it shows as a PR annotation; otherwise
+    ::error file=<file>,line=<line>::<path>: <message>, escaped, so it shows as a PR annotation; otherwise
     <file>:<line>: <path>: <message>. Returns the exit code: 0 with no problems, 1 otherwise.
     """
     root = Path(argv[0]) if argv else REPO_ROOT
@@ -547,7 +581,7 @@ def main(argv: list[str]) -> int:
         text = f"{problem.path}: {problem.message}" if problem.path else problem.message
         if in_ci:
             where = f",line={problem.line}" if problem.line is not None else ""
-            print(f"::error file={problem.file}{where}::{text}")
+            print(f"::error file={_escape(problem.file, property=True)}{where}::{_escape(text)}")
         else:
             where = f":{problem.line}" if problem.line is not None else ""
             print(f"{problem.file}{where}: {text}")

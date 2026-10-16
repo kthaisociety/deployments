@@ -318,11 +318,23 @@ def test_env_non_scalar_value_fails(repo):
     assert ".environments.staging.env.HOSTS" in paths(check(repo))
 
 
-@pytest.mark.parametrize("value", ["8080", "true"], ids=["number", "boolean"])
-def test_env_non_string_value_says_quote_it(repo, value):
-    """An env value that is a number or a boolean fails and says to quote it."""
+@pytest.mark.parametrize(
+    "value, got",
+    [("8080", "number"), ("true", "boolean"), ("2024-01-01", "date")],
+    ids=["number", "boolean", "date"],
+)
+def test_env_non_string_value_says_quote_it(repo, value, got):
+    """An env value YAML reads as a number, boolean or date fails, names what YAML read, and says to quote it."""
     write(repo, PROJECT, project_yaml(staging=f"\n    env:\n      PORT: {value}\n"))
-    assert "quote" in message_at(check(repo), ".environments.staging.env.PORT").lower()
+    message = message_at(check(repo), ".environments.staging.env.PORT")
+    assert "quote" in message.lower() and f"got {got}" in message
+
+
+def test_env_that_isnt_a_map_says_expected_map(repo):
+    """env: 5 says env must be a map, not to quote the 5: quoting it would still fail."""
+    write(repo, PROJECT, MINIMAL.replace("  env: {}", "  env: 5"))
+    message = message_at(check(repo), ".defaults.env")
+    assert "expected map" in message and "quote" not in message
 
 
 def test_env_multiline_value_fails(repo):
@@ -678,6 +690,52 @@ def test_missing_guide_or_template_is_a_problem(repo, rel):
     assert rel in {p.file for p in check(repo)}
 
 
+# Input the parser or the line lookup choke on
+
+
+def test_merged_domain_key_is_a_problem_not_a_crash(repo):
+    """An unknown key that comes in through a merge (<<: *anchor) has no line of its own: it's reported at the domain."""
+    text = project_yaml(top="x: &d {port: 1, bogus: 2}\n", staging="\n    domains:\n      a.com: {<<: *d}\n")
+    write(repo, PROJECT, text)
+    problems = check(repo)
+    bogus = [p for p in problems if p.path == '.environments.staging.domains["a.com"].bogus']
+    assert [p.line for p in bogus] == [text.splitlines().index("      a.com: {<<: *d}") + 1]
+
+
+@pytest.mark.parametrize("rel", [PROJECT, TEMPLATE], ids=["project", "template"])
+def test_control_character_is_not_valid_yaml(repo, rel):
+    """A control character is a not-valid-YAML Problem at its line, and the other files are still checked."""
+    write(repo, rel, MINIMAL + "# \x07\n")
+    write(repo, OTHER, project_yaml(top="name: other\n"))
+    problems = check(repo)
+    assert [(p.line, "not valid YAML" in p.message) for p in problems if p.file == rel] == [(MINIMAL.count("\n") + 1, True)]
+    assert OTHER in {p.file for p in problems}
+
+
+def test_control_character_in_guide_reference_is_not_valid_yaml(repo):
+    """A control character in the guide's reference example is a not-valid-YAML Problem."""
+    write(repo, GUIDE, guide(("yaml", FULL + "# \x07\n")))
+    assert any("not valid YAML" in p.message for p in check(repo) if p.file == GUIDE)
+
+
+@pytest.mark.parametrize("rel", [PROJECT, TEMPLATE, GUIDE], ids=["project", "template", "guide"])
+def test_file_that_isnt_utf8_is_a_problem(repo, rel):
+    """A byte that isn't UTF-8 is a Problem at its line, and the other files are still checked."""
+    path = repo / rel
+    path.write_bytes(path.read_bytes() + b"# caf\xe9\n")
+    write(repo, OTHER, project_yaml(top="name: other\n"))
+    problems = check(repo)
+    lines = path.read_bytes().count(b"\n")
+    assert [(p.line, "UTF-8" in p.message) for p in problems if p.file == rel] == [(lines, True)]
+    assert OTHER in {p.file for p in problems}
+
+
+def test_template_name_in_two_places_fails(repo):
+    """The template gets the collision check too: every project copied from it would fail."""
+    write(repo, TEMPLATE, MINIMAL.replace("  env: {}", "  env:\n    TOKEN: x").replace("  secrets: []", "  secrets: [TOKEN]"))
+    assert [(p.file, p.path) for p in check(repo)] == [(TEMPLATE, ".defaults.env.TOKEN")]
+
+
 # Command
 
 
@@ -715,6 +773,14 @@ def test_command_prints_workflow_commands_in_ci(repo):
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
     out = run_command(repo, GITHUB_ACTIONS="true").stdout
     assert f"::error file={PROJECT},line=7::.defaults.secret: " in out
+
+
+def test_command_escapes_workflow_commands_in_ci(repo):
+    """With GITHUB_ACTIONS=true, %, CR and LF are escaped in the text, and , and : too in file=."""
+    rel = "projects/a,b:c/project.yaml"
+    write(repo, rel, project_yaml(top='"50%": x\n'))
+    out = run_command(repo, GITHUB_ACTIONS="true").stdout
+    assert '::error file=projects/a%2Cb%3Ac/project.yaml,line=2::["50%25"]: unknown key' in out
 
 
 def test_command_omits_line_in_ci_when_problem_has_none(repo):
