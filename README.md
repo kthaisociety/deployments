@@ -39,8 +39,9 @@ For the `project.yaml` fields and a complete checked example, read the
 reports the same problems the PR's `check` does.
 
 1. `infrastructure`: one line in `terraform/openbao/projects.yaml`, `my-app: {}` (staging and
-   production; add `shared: [...]` if it reads shared secrets). That creates its policies and empty
-   secret paths. This repo's `check` fails, with that line, until it's there.
+   production). That creates its policies and empty secret paths. Every project can read the shared
+   store for its environment, `secret/shared/<environment>`, with no extra line. This repo's `check`
+   fails, with that line, until it's there.
 2. Write its secrets in OpenBao (`secret/<project>/<environment>`).
 3. Here, one PR: `projects/<project>/project.yaml`; `projects/<project>/release.yaml` with every
    environment `null`; and the project added to the `project` options in `.github/workflows/deploy.yml`

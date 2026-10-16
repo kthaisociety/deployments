@@ -161,6 +161,9 @@ def _value_message(error, parent) -> str:
         return "must be a string without a newline"
     if error.validator == "not" and parent[-1:] == ["custom_cert_resolver"]:
         return "only allowed with certificate_type custom"
+    if error.validator == "uniqueItems":
+        repeated = sorted({item for i, item in enumerate(error.instance) if item in error.instance[:i]}, key=str)
+        return f"lists {_or_list(str(item) for item in repeated)} more than once"
     return error.message
 
 
@@ -392,14 +395,10 @@ def _collision_problems(file, doc) -> list[Problem]:
     A collision within defaults alone is reported once, as in defaults.
     """
     defaults = _as_map(_as_map(doc).get("defaults"))
-    secrets = {
-        name: ["defaults", "secrets", i] for i, name in enumerate(_as_list(defaults.get("secrets"))) if isinstance(name, str)
-    }
-    shared = {}
-    for group, names in _as_map(defaults.get("shared")).items():
-        for i, name in enumerate(_as_list(names)):
-            if isinstance(name, str):
-                shared[name] = ["defaults", "shared", group, i]
+    secrets, shared = (
+        {name: ["defaults", key, i] for i, name in enumerate(_as_list(defaults.get(key))) if isinstance(name, str)}
+        for key in ("secrets", "shared")
+    )
     problems, seen = [], set()
     for label, env in _env_scopes(doc, defaults):
         for name, target, other in _clashes(env, secrets, shared):
@@ -467,6 +466,7 @@ def check(root: Path) -> list[Problem]:
     - Within one environment, with its env merged over defaults.env, a name in two of env, secrets
       and shared is a Problem at the env key when env is one of the two, otherwise at the shared
       entry, and its message gives the other one's path.
+    - A name listed twice in secrets, or twice in shared, is a Problem naming it.
     - A domain needs port, an integer from 1 to 65535. certificate_type is letsencrypt, none or
       custom (the message lists them). custom_cert_resolver is required with certificate_type
       custom and rejected otherwise. https: false allows only certificate_type none. path and

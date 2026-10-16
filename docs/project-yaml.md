@@ -22,8 +22,7 @@ defaults:
   secrets:
     - SESSION_SECRET
   shared:
-    shared-config:
-      - SHARED_TOKEN
+    - SHARED_TOKEN
   volumes:
     /data: app-data
 environments:
@@ -62,8 +61,7 @@ defaults:
   secrets:
     - SESSION_SECRET
   shared:
-    shared-config:
-      - SHARED_TOKEN
+    - SHARED_TOKEN
   volumes:
     /data: app-data
 ```
@@ -93,13 +91,13 @@ environment live in OpenBao.
 
 ## Shared secrets
 
-`shared` maps an OpenBao shared-secret group to the names it provides. The group and names are the
-same for both environments; values live in OpenBao.
+`shared` lists the names a project reads from the shared store, `secret/shared/<environment>` in
+OpenBao. Every project can read the shared store for its own environment, so list only the names you
+use. To add a new shared value, ask an infra admin to set it in the OpenBao UI.
 
 ```yaml excerpt
   shared:
-    shared-config:
-      - SHARED_TOKEN
+    - SHARED_TOKEN
 ```
 
 ## Volumes

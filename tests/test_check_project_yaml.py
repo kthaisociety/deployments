@@ -21,7 +21,7 @@ repo: example/demo
 defaults:
   env: {}
   secrets: []
-  shared: {}
+  shared: []
   volumes: {}
 environments:
   staging: {}
@@ -38,7 +38,7 @@ defaults:
   secrets:
     - TOKEN
   shared:
-    group: [SHARED_TOKEN]
+    - SHARED_TOKEN
   volumes:
     /data: data
 environments:
@@ -70,7 +70,7 @@ def project_yaml(*, top="", defaults="", staging=" {}", production=" {}"):
     """MINIMAL with extra lines at the top level and under defaults, and each environment's body."""
     return (
         f"repo: example/demo\n{top}"
-        "defaults:\n  env: {}\n  secrets: []\n  shared: {}\n  volumes: {}\n"
+        "defaults:\n  env: {}\n  secrets: []\n  shared: []\n  volumes: {}\n"
         f"{defaults}"
         f"environments:\n  staging:{staging}\n  production:{production}\n"
     )
@@ -237,7 +237,7 @@ def test_domains_under_defaults_says_where_it_belongs(repo):
 
 @pytest.mark.parametrize(
     "key, body",
-    [("secrets", " [A]"), ("shared", " {s: [A]}"), ("volumes", " {/data: data}")],
+    [("secrets", " [A]"), ("shared", " [A]"), ("volumes", " {/data: data}")],
     ids=["secrets", "shared", "volumes"],
 )
 def test_per_environment_secrets_point_to_defaults_and_openbao(repo, key, body):
@@ -251,10 +251,10 @@ def test_per_environment_secrets_point_to_defaults_and_openbao(repo, key, body):
     "removed, path, name",
     [
         ("repo: example/demo\n", ".repo", "repo"),
-        ("defaults:\n  env: {}\n  secrets: []\n  shared: {}\n  volumes: {}\n", ".defaults", "defaults"),
+        ("defaults:\n  env: {}\n  secrets: []\n  shared: []\n  volumes: {}\n", ".defaults", "defaults"),
         ("  env: {}\n", ".defaults.env", "env"),
         ("  secrets: []\n", ".defaults.secrets", "secrets"),
-        ("  shared: {}\n", ".defaults.shared", "shared"),
+        ("  shared: []\n", ".defaults.shared", "shared"),
         ("environments:\n  staging: {}\n  production: {}\n", ".environments", "environments"),
         ("  staging: {}\n", ".environments.staging", "staging"),
         ("  production: {}\n", ".environments.production", "production"),
@@ -272,7 +272,7 @@ def test_missing_skeleton_key_is_named(repo, removed, path, name):
     [
         ("  env: {}\n", ".defaults.env", "{}"),
         ("  secrets: []\n", ".defaults.secrets", "[]"),
-        ("  shared: {}\n", ".defaults.shared", "{}"),
+        ("  shared: []\n", ".defaults.shared", "[]"),
         ("  volumes: {}\n", ".defaults.volumes", "{}"),
         ("  staging: {}\n", ".environments.staging", "{}"),
     ],
@@ -340,13 +340,13 @@ def test_env_multiline_value_fails(repo):
             ".defaults.secrets[0]",
         ),
         (
-            MINIMAL.replace("  env: {}", "  env:\n    TOKEN: x").replace("  shared: {}", "  shared:\n    group: [TOKEN]"),
+            MINIMAL.replace("  env: {}", "  env:\n    TOKEN: x").replace("  shared: []", "  shared: [TOKEN]"),
             ".defaults.env.TOKEN",
-            ".defaults.shared.group[0]",
+            ".defaults.shared[0]",
         ),
         (
-            MINIMAL.replace("  secrets: []", "  secrets: [TOKEN]").replace("  shared: {}", "  shared:\n    group: [TOKEN]"),
-            ".defaults.shared.group[0]",
+            MINIMAL.replace("  secrets: []", "  secrets: [TOKEN]").replace("  shared: []", "  shared: [TOKEN]"),
+            ".defaults.shared[0]",
             ".defaults.secrets[0]",
         ),
         (
@@ -363,6 +363,19 @@ def test_name_in_two_places_fails_naming_the_other(repo, text, path, other):
     """A name in two of env, secrets and shared fails at the env key or the shared entry, naming the other path."""
     write(repo, PROJECT, text)
     assert other in message_at(check(repo), path)
+
+
+def test_shared_as_groups_says_expected_list(repo):
+    """shared written as groups, the old shape, fails: it's a list of names."""
+    write(repo, PROJECT, MINIMAL.replace("  shared: []", "  shared:\n    group: [TOKEN]"))
+    assert "expected list" in message_at(check(repo), ".defaults.shared")
+
+
+@pytest.mark.parametrize("key", ["secrets", "shared"])
+def test_name_twice_in_one_list_fails(repo, key):
+    """The same name twice in secrets or in shared fails: the app would get two lines for one variable."""
+    write(repo, PROJECT, MINIMAL.replace(f"  {key}: []", f"  {key}: [TOKEN, TOKEN]"))
+    assert "TOKEN more than once" in message_at(check(repo), f".defaults.{key}")
 
 
 def test_unknown_certificate_type_lists_allowed(repo):
@@ -545,7 +558,7 @@ def test_reference_missing_key_is_named(repo, line, key):
     [
         ("  env:\n    MODE: release\n", "  env: {}\n", ".defaults.env", "env"),
         ("  secrets:\n    - TOKEN\n", "  secrets: []\n", ".defaults.secrets", "secrets"),
-        ("  shared:\n    group: [SHARED_TOKEN]\n", "  shared: {}\n", ".defaults.shared", "shared"),
+        ("  shared:\n    - SHARED_TOKEN\n", "  shared: []\n", ".defaults.shared", "shared"),
         ("  volumes:\n    /data: data\n", "  volumes: {}\n", ".defaults.volumes", "volumes"),
     ],
     ids=["env", "secrets", "shared", "volumes"],

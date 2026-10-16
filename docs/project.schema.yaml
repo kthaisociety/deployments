@@ -21,14 +21,14 @@ properties:
         $ref: "#/$defs/env"
       secrets:
         type: array
+        uniqueItems: true
         items:
           type: string
       shared:
-        type: object
-        additionalProperties:
-          type: array
-          items:
-            type: string
+        type: array
+        uniqueItems: true
+        items:
+          type: string
       volumes:
         type: object
         additionalProperties:
