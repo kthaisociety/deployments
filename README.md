@@ -22,6 +22,9 @@ terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
   deploy.yml      # deploy requests: validate, commit the release.yaml line, apply, report (one run)
+docs/             # the project.yaml guide, schema and template; decision records in adr/ and pcr/
+scripts/          # check-project-yaml, the same project.yaml check `check` runs on every PR
+tests/            # pytest tests for scripts/
 ```
 
 A project's OpenBao side (its policies and empty secret paths) lives in
@@ -30,9 +33,15 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 
 ## Adding a project
 
+For the `project.yaml` fields and a complete checked example, read the
+[project.yaml guide](docs/project-yaml.md). Start a new project from
+[the template](docs/project.template.yaml). Run `scripts/check-project-yaml` before pushing; it
+reports the same problems the PR's `check` does.
+
 1. `infrastructure`: one line in `terraform/openbao/projects.yaml`, `my-app: {}` (staging and
-   production; add `shared: [...]` if it reads shared secrets). That creates its policies and empty
-   secret paths. This repo's `check` fails, with that line, until it's there.
+   production). That creates its policies and empty secret paths. Every project can read the shared
+   store for its environment, `secret/shared/<environment>`, with no extra line. This repo's `check`
+   fails, with that line, until it's there.
 2. Write its secrets in OpenBao (`secret/<project>/<environment>`).
 3. Here, one PR: `projects/<project>/project.yaml`; `projects/<project>/release.yaml` with every
    environment `null`; and the project added to the `project` options in `.github/workflows/deploy.yml`
@@ -43,10 +52,8 @@ policies decide what a token can read, so this repo's CI can't write them. It on
 
 ## Adding a domain
 
-1. In `projects/<project>/project.yaml`, under the environment (never `defaults`): `domains:`, keyed by
-   hostname. `port` (the container port Traefik forwards to) is required. Optional: `https`,
-   `certificate_type`, `custom_cert_resolver`, `path`, `internal_path`, `strip_path`, `enabled`,
-   `forward_auth_enabled`, `custom_entrypoint`.
+1. Add the domain under the environment in `projects/<project>/project.yaml`. See the
+   [project.yaml guide](docs/project-yaml.md) for the domain fields and examples.
 2. Left out: HTTPS on, with a Let's Encrypt certificate; everything else is Dokploy's default. A
    misspelt setting fails the plan instead of being ignored.
 3. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.

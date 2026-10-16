@@ -15,9 +15,9 @@ defaults:
   secrets:
     - MATTERMOST_BOT_TOKEN
     - GOOGLE_ADMIN_SERVICE_ACCOUNT_JSON
-  # secret/shared/onboarding-service-secret/<environment>, also read by landingpage-backend.
+  # Values in OpenBao at secret/shared/<environment>, which every project can read.
   shared:
-    onboarding-service-secret: [ONBOARDING_SERVICE_SECRET]
+    - ONBOARDING_SERVICE_SECRET
   # SQLite.
   volumes:
     /data: data

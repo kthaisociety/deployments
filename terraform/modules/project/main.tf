@@ -1,7 +1,8 @@
 # One project's Dokploy side: the Dokploy project and its environments, and per environment a provider
 # token (minted from OpenBao's dokploy-provider role), a vault provider holding it, the app and its
-# volumes. Env is the plain `env` values plus one generated OpenBao reference per secret name, so no app
-# secret value is ever in git or state. (The provider tokens themselves are in this repo's state,
+# volumes. Env is the plain `env` values plus one generated OpenBao reference per secret and shared name
+# (a shared one reads the environment's shared store, secret/shared/<env>), so no app secret value is
+# ever in git or state. (The provider tokens themselves are in this repo's state,
 # encrypted with its passphrase: whoever can decrypt that state can use them.)
 #
 # Every environment's app and volumes exist from the start, but an app only deploys once release.yaml
@@ -28,7 +29,7 @@ locals {
     for e, c in var.config.environments : e => {
       env     = merge(try(local.defaults.env, {}), try(c.env, {}))
       secrets = distinct(concat(try(local.defaults.secrets, []), try(c.secrets, [])))
-      shared  = merge(try(local.defaults.shared, {}), try(c.shared, {}))
+      shared  = distinct(concat(try(local.defaults.shared, []), try(c.shared, [])))
       volumes = merge(try(local.defaults.volumes, {}), try(c.volumes, {}))
       domains = try(c.domains, {})
       # Required for every environment (check enforces it too): a missing line must fail, not quietly
@@ -103,8 +104,8 @@ locals {
       [for k in sort(keys(c.env)) : "${k}=${c.env[k]}"],
       [for k in c.secrets :
       "${k}=$${{vault.${local.provider_name[e]}.${local.secret_path[e]}:${k}}}"],
-      flatten([for name, ks in c.shared : [for k in ks :
-      "${k}=$${{vault.${local.provider_name[e]}.shared/${name}/${e}:${k}}}"]]),
+      [for k in c.shared :
+      "${k}=$${{vault.${local.provider_name[e]}.shared/${e}:${k}}}"],
     ))
   }
 }

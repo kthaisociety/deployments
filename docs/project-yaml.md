@@ -1,0 +1,163 @@
+# `project.yaml` guide
+
+Use this guide before writing or editing a project's configuration. For a new project, start with
+the [project template](project.template.yaml). The local check validates project files, this guide,
+and the template; run `scripts/check-project-yaml` before pushing.
+
+## Top level
+
+Every file has `repo`, `defaults`, and `environments`. `image` is optional; when omitted, the image
+defaults to `ghcr.io/<repo>`. Every key is a string: quote one that YAML would read as a number,
+boolean, null or date, such as `"8080"` or `"2024-01-01"`. The complete example below uses every key
+the schema accepts.
+
+```yaml
+repo: kthaisociety/example-service
+image: ghcr.io/example/other
+defaults:
+  env:
+    PORT: "8000"
+    GIN_MODE: release
+    LOG_LEVEL: info
+  secrets:
+    - SESSION_SECRET
+  shared:
+    - SHARED_TOKEN
+  volumes:
+    /data: app-data
+environments:
+  staging:
+    env:
+      LOG_LEVEL: debug
+    domains:
+      staging.example.kthais.com:
+        port: 8000
+        https: true
+        certificate_type: custom
+        custom_cert_resolver: myresolver
+        path: /api
+        internal_path: /
+        strip_path: true
+        enabled: true
+        forward_auth_enabled: false
+        custom_entrypoint: websecure
+  production:
+    domains:
+      example.kthais.com:
+        port: 8000
+```
+
+## Defaults
+
+`defaults` provides values inherited by both environments. `env`, `secrets`, and `shared` are
+required; write `{}` or `[]` when unused. `volumes` is optional and usually belongs in a database.
+
+```yaml excerpt
+defaults:
+  env:
+    PORT: "8000"
+    GIN_MODE: release
+    LOG_LEVEL: info
+  secrets:
+    - SESSION_SECRET
+  shared:
+    - SHARED_TOKEN
+  volumes:
+    /data: app-data
+```
+
+## Env
+
+`env` maps variable names to single-line strings. Quote numbers and booleans so YAML does not change
+their values. Environment values override defaults with the same name. A name belongs to only one of
+`env`, `secrets` and `shared`, checked per environment after its `env` is merged over the defaults.
+
+```yaml excerpt
+  env:
+    PORT: "8000"
+    GIN_MODE: release
+    LOG_LEVEL: info
+```
+
+## Secrets
+
+`secrets` lists secret names required by the project. Put the names here once; values for each
+environment live in OpenBao.
+
+```yaml excerpt
+  secrets:
+    - SESSION_SECRET
+```
+
+## Shared secrets
+
+`shared` lists the names a project reads from the shared store, `secret/shared/<environment>` in
+OpenBao. Every project can read the shared store for its own environment, so list only the names you
+use. To add a new shared value, ask an infra admin to set it in the OpenBao UI.
+
+```yaml excerpt
+  shared:
+    - SHARED_TOKEN
+```
+
+## Volumes
+
+`volumes` maps a container path to its volume name. It is optional, and stateful data is usually
+better kept in a database.
+
+```yaml excerpt
+  volumes:
+    /data: app-data
+```
+
+## Environments
+
+Every project has exactly `staging` and `production`. Either may be `{}` when it has no overrides.
+Every environment also needs a corresponding line in that project's `release.yaml`.
+
+```yaml excerpt
+environments:
+  staging:
+    env:
+      LOG_LEVEL: debug
+    domains:
+      staging.example.kthais.com:
+        port: 8000
+        https: true
+        certificate_type: custom
+        custom_cert_resolver: myresolver
+        path: /api
+        internal_path: /
+        strip_path: true
+        enabled: true
+        forward_auth_enabled: false
+        custom_entrypoint: websecure
+  production:
+    domains:
+      example.kthais.com:
+        port: 8000
+```
+
+## Domains
+
+`domains` is optional under each environment and is keyed by hostname. `port` is required and must
+be from 1 to 65535. Certificate settings must agree: `certificate_type` is `letsencrypt`, `none`,
+or `custom`; custom certificates need `custom_cert_resolver`; `https: false` permits only
+`certificate_type: none`. `path` and `internal_path` start with `/`. A host and path belong to one
+domain across every project and environment, so staging and production need different hosts. Hosts
+compare without case, and a domain with no `path` is at `/`. The same host on another `path` is fine.
+
+```yaml excerpt
+    domains:
+      staging.example.kthais.com:
+        port: 8000
+        https: true
+        certificate_type: custom
+        custom_cert_resolver: myresolver
+        path: /api
+        internal_path: /
+        strip_path: true
+        enabled: true
+        forward_auth_enabled: false
+        custom_entrypoint: websecure
+```
