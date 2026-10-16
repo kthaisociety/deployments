@@ -7,7 +7,9 @@ and the template; run `scripts/check-project-yaml` before pushing.
 ## Top level
 
 Every file has `repo`, `defaults`, and `environments`. `image` is optional; when omitted, the image
-defaults to `ghcr.io/<repo>`. The complete example below uses every key the schema accepts.
+defaults to `ghcr.io/<repo>`. Every key is a string: quote one that YAML would read as a number,
+boolean, null or date, such as `"8080"` or `"2024-01-01"`. The complete example below uses every key
+the schema accepts.
 
 ```yaml
 repo: kthaisociety/example-service

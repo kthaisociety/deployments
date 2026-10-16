@@ -184,6 +184,32 @@ def _not_yaml(file, error, offset=0) -> Problem:
     return Problem(file, line, None, f"not valid YAML: {error.problem}")
 
 
+def _yaml_text(key) -> str:
+    """A non-string key as YAML writes it: 1.5, true, null, 2024-01-01."""
+    if key is None:
+        return "null"
+    if isinstance(key, bool):
+        return str(key).lower()
+    return key.isoformat() if hasattr(key, "isoformat") else str(key)
+
+
+def _key_problems(file, doc, offset=0, steps=()) -> list[Problem]:
+    """A Problem at each map key YAML didn't read as a string. The schema can't see these, and _yq can't name them."""
+    problems = []
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            if isinstance(key, str):
+                problems += _key_problems(file, value, offset, steps + (key,))
+                continue
+            text = _yaml_text(key)
+            message = f"key {text} isn't a string to YAML. Quote it: \"{text}\""
+            problems.append(Problem(file, _line_at(doc, [key]) + offset, f"{_yq(steps) if steps else ''}[{text}]", message))
+    elif isinstance(doc, list):
+        for i, item in enumerate(doc):
+            problems += _key_problems(file, item, offset, steps + (i,))
+    return problems
+
+
 def _schema_problems(file, doc, validator, offset=0) -> list[Problem]:
     """One Problem per offending path in doc. offset moves lines, for a block inside a guide."""
     if doc is None:
@@ -205,7 +231,7 @@ def _check_text(file, text, validator) -> list[Problem]:
         doc = _load(text)
     except MarkedYAMLError as err:
         return [_not_yaml(file, err)]
-    return _schema_problems(file, doc, validator)
+    return _key_problems(file, doc) or _schema_problems(file, doc, validator)
 
 
 def _check_project(file, text, validator) -> list[Problem]:
@@ -214,7 +240,7 @@ def _check_project(file, text, validator) -> list[Problem]:
         doc = _load(text)
     except MarkedYAMLError as err:
         return [_not_yaml(file, err)]
-    return _schema_problems(file, doc, validator) + _collision_problems(file, doc)
+    return _key_problems(file, doc) or _schema_problems(file, doc, validator) + _collision_problems(file, doc)
 
 
 def _as_map(value) -> dict:
@@ -294,6 +320,9 @@ def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]
         doc = _load(reference)
     except MarkedYAMLError as err:
         return [_not_yaml(GUIDE, err, ref_line)]
+    problems = _key_problems(GUIDE, doc, ref_line)
+    if problems:
+        return problems
     problems = _schema_problems(GUIDE, doc, validator, ref_line)
     if doc is None:
         return problems
@@ -390,6 +419,8 @@ def check(root: Path) -> list[Problem]:
       duplicate key) gives one Problem with the parser's line and reason, and the other files are
       still checked.
     - One Problem per offending key.
+    - A key YAML reads as a number, boolean, null or date says to quote it, and the file's other
+      checks wait until it's fixed: the schema sees every key as a string and can't catch these.
     - A missing guide or template is a Problem, and so is an empty template.
     - An unknown key's message lists the keys allowed at its path.
     - domains under defaults says it belongs under an environment.

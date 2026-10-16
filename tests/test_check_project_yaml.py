@@ -447,6 +447,21 @@ def test_duplicate_key_fails_with_its_line(repo):
     assert 4 in {p.line for p in check(repo) if p.file == PROJECT}
 
 
+@pytest.mark.parametrize("key", ["1.5", "15", "true", "null", "2024-01-01"])
+def test_non_string_key_says_quote_it(repo, key):
+    """A key YAML reads as a number, boolean, null or date fails at its line and says to quote it."""
+    write(repo, PROJECT, project_yaml(staging=f"\n    env:\n      {key}: x\n"))
+    problems = [p for p in check(repo) if p.file == PROJECT]
+    assert [(p.path, p.line) for p in problems] == [(f".environments.staging.env[{key}]", 10)]
+    assert "quote" in problems[0].message.lower()
+
+
+def test_non_string_key_in_guide_reported_at_guide_line(repo):
+    """A non-string key in the reference example fails at its line in the markdown."""
+    write(repo, GUIDE, guide(("yaml", FULL.replace("    MODE: release\n", "    1.5: release\n"))))
+    assert [(p.path, p.line) for p in check(repo)] == [(".defaults.env[1.5]", 8)]
+
+
 def test_problems_across_files_all_reported(repo):
     """Problems in several files are all reported in one run."""
     write(repo, PROJECT, project_yaml(top="name: demo\n"))
