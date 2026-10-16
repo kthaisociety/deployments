@@ -462,6 +462,26 @@ def test_non_string_key_in_guide_reported_at_guide_line(repo):
     assert [(p.path, p.line) for p in check(repo)] == [(".defaults.env[1.5]", 8)]
 
 
+@pytest.mark.parametrize(
+    "text, path",
+    [
+        ("&loop [*loop]\n", "[0]"),
+        ("&loop {repo: *loop}\n", ".repo"),
+        ("&loop\nrepo: example/demo\ndefaults: {env: {}, loop: *loop}\n", ".defaults.loop"),
+    ],
+)
+def test_alias_loop_is_a_problem_not_a_crash(repo, text, path):
+    """An alias to a map or list that contains it is a problem at the alias, and the other files are still checked.
+
+    The parser keeps an alias to the document root as a real loop. Aliases to anything deeper load as null.
+    """
+    write(repo, PROJECT, text)
+    write(repo, "projects/other/project.yaml", project_yaml(top="name: other\n"))
+    problems = check(repo)
+    assert "contains it" in message_at([p for p in problems if p.file == PROJECT], path)
+    assert "projects/other/project.yaml" in {p.file for p in problems}
+
+
 def test_problems_across_files_all_reported(repo):
     """Problems in several files are all reported in one run."""
     write(repo, PROJECT, project_yaml(top="name: demo\n"))

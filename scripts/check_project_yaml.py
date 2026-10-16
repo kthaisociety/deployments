@@ -193,20 +193,25 @@ def _yaml_text(key) -> str:
     return key.isoformat() if hasattr(key, "isoformat") else str(key)
 
 
-def _key_problems(file, doc, offset=0, steps=()) -> list[Problem]:
-    """A Problem at each map key YAML didn't read as a string. The schema can't see these, and _yq can't name them."""
+def _key_problems(file, doc, offset=0, steps=(), above=frozenset()) -> list[Problem]:
+    """A Problem at each map key YAML didn't read as a string. The schema can't see these, and _yq can't name them.
+
+    Also a Problem at each alias back to a map or list that contains it (&loop [*loop]). The parser keeps
+    that loop, and the scan and the schema would recurse until they crash. above holds the ids of doc's containers.
+    """
+    above |= {id(doc)}
+    children = doc.items() if isinstance(doc, dict) else enumerate(doc) if isinstance(doc, list) else ()
     problems = []
-    if isinstance(doc, dict):
-        for key, value in doc.items():
-            if isinstance(key, str):
-                problems += _key_problems(file, value, offset, steps + (key,))
-                continue
-            text = _yaml_text(key)
+    for step, child in children:
+        if isinstance(doc, dict) and not isinstance(step, str):
+            text = _yaml_text(step)
             message = f"key {text} isn't a string to YAML. Quote it: \"{text}\""
-            problems.append(Problem(file, _line_at(doc, [key]) + offset, f"{_yq(steps) if steps else ''}[{text}]", message))
-    elif isinstance(doc, list):
-        for i, item in enumerate(doc):
-            problems += _key_problems(file, item, offset, steps + (i,))
+            problems.append(Problem(file, _line_at(doc, [step]) + offset, f"{_yq(steps) if steps else ''}[{text}]", message))
+        elif id(child) in above:
+            message = "alias refers to a map or list that contains it. Write the value out instead"
+            problems.append(Problem(file, _line_at(doc, [step]) + offset, _yq(steps + (step,)), message))
+        else:
+            problems += _key_problems(file, child, offset, steps + (step,), above)
     return problems
 
 
@@ -447,6 +452,7 @@ def check(root: Path) -> list[Problem]:
     - One Problem per offending key.
     - A key YAML reads as a number, boolean, null or date says to quote it, and the file's other
       checks wait until it's fixed: the schema sees every key as a string and can't catch these.
+    - So does an alias to a map or list that contains it (&loop [*loop]), at the alias.
     - A missing guide or template is a Problem, and so is an empty template.
     - An unknown key's message lists the keys allowed at its path.
     - domains under defaults says it belongs under an environment.
