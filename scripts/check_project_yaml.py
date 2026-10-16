@@ -261,7 +261,8 @@ def _resolve_schema(schema, root_schema):
 
 
 def _missing_reference_keys(doc, schema, root_schema):
-    """Return (path, key) for each property never demonstrated in any matching object in the reference."""
+    """Return (path, message) for each property never demonstrated in any matching object in the reference,
+    and for each map whose entries have properties but that the reference never gives an entry."""
     first_seen, present = {}, {}
 
     def visit(value, candidate, path=()):
@@ -281,13 +282,32 @@ def _missing_reference_keys(doc, schema, root_schema):
                 if key not in properties:
                     visit(child_value, additional, path + (key,))
 
+    unshown = {}
+
+    def walk(candidate, path=()):
+        """Find entry schemas that visit never reached, since an empty map instantiates none."""
+        candidate = _resolve_schema(candidate, root_schema)
+        if candidate.get("type") != "object":
+            return
+        for key, child_schema in candidate.get("properties", {}).items():
+            walk(child_schema, path + (key,))
+        additional = candidate.get("additionalProperties")
+        if isinstance(additional, dict):
+            entry = _resolve_schema(additional, root_schema)
+            if id(entry) in first_seen:
+                walk(entry, first_seen[id(entry)][1])
+            elif entry.get("properties"):
+                unshown.setdefault(id(entry), path)
+
     visit(doc, schema)
-    return [
-        (path + (key,), key)
+    walk(schema)
+    missing = [
+        (path + (key,), f"reference example is missing allowed key '{key}'")
         for schema_id, (candidate, path) in first_seen.items()
         for key in candidate["properties"]
         if key not in present[schema_id]
     ]
+    return missing + [(path, f"reference example's {path[-1]} must show an entry") for path in unshown.values()]
 
 
 def _yaml_blocks(lines) -> list[tuple[str, int, str]]:
@@ -326,8 +346,8 @@ def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]
     problems = _schema_problems(GUIDE, doc, validator, ref_line)
     if doc is None:
         return problems
-    for steps, key in _missing_reference_keys(doc, schema, schema):
-        problems.append(Problem(GUIDE, ref_line, _yq(list(steps)), f"reference example is missing allowed key '{key}'"))
+    for steps, message in _missing_reference_keys(doc, schema, schema):
+        problems.append(Problem(GUIDE, ref_line, _yq(list(steps)), message))
     defaults = _as_map(_as_map(doc).get("defaults"))
     for key in MUST_SHOW_ENTRY:
         if key in defaults and defaults[key] in ({}, []):

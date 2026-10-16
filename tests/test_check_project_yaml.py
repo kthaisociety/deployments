@@ -536,6 +536,14 @@ def test_reference_empty_map_or_list_is_named(repo, filled, empty, path, key):
     assert key in message_at([p for p in check(repo) if p.file == GUIDE], path)
 
 
+def test_reference_without_domain_entry_is_named(repo):
+    """A reference example whose environments all leave domains empty fails, so the guide shows every domain key."""
+    no_domains = FULL.split("    domains:\n")[0] + "    domains: {}\n  production:\n    domains: {}\n"
+    write(repo, GUIDE, guide(("yaml", no_domains)))
+    problems = [p for p in check(repo) if p.file == GUIDE]
+    assert "domains" in message_at(problems, ".environments.staging.domains")
+
+
 def test_excerpt_of_reference_passes(repo):
     """A ```yaml excerpt block that is consecutive lines of the reference, at any indentation, passes."""
     excerpt = "domains:\n  demo.example.com:\n    port: 3000\n"
