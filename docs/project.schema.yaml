@@ -1,7 +1,8 @@
 # What project.yaml may contain. Every rule JSON Schema can express lives here (ADR-0001), and scripts/check_project_yaml.py
-# loads files, runs this schema and words its errors. The checker holds only the cross-field rule JSON Schema
-# can't express: a name in two of env, secrets and shared. Stricter than terraform/modules/project on purpose:
-# per-environment secrets, shared secrets and volumes are rejected, and only staging and production exist.
+# loads files, runs this schema and words its errors. The checker holds only the rules JSON Schema can't
+# express: a name in two of env, secrets and shared, and a domain's host and path declared twice across
+# projects. Stricter than terraform/modules/project on purpose: per-environment secrets, shared secrets
+# and volumes are rejected, and only staging and production exist.
 $schema: https://json-schema.org/draft/2020-12/schema
 title: project.yaml
 type: object

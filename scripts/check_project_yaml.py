@@ -2,8 +2,8 @@
 
 The schema is the list of what project.yaml may contain: closed at every level, so an unknown key
 fails. It is stricter than modules/project, which still accepts per-environment secrets, shared secrets,
-volumes and other environment names. The one rule JSON Schema can't express, a name in two of env,
-secrets and shared, lives here (ADR-0001).
+volumes and other environment names. The rules JSON Schema can't express live here (ADR-0001): a name
+in two of env, secrets and shared, and a domain's host and path declared twice across projects.
 """
 
 import ast
@@ -242,13 +242,17 @@ def _check_text(file, text, validator) -> list[Problem]:
     return _key_problems(file, doc) or _schema_problems(file, doc, validator)
 
 
-def _check_project(file, text, validator) -> list[Problem]:
-    """Parse one project.yaml and return its schema problems, then its collisions."""
+def _check_project(file, text, validator) -> tuple[list[Problem], object]:
+    """Parse one project.yaml and return its schema problems, then its collisions, and the parsed file.
+    The file is None when it isn't YAML or has a key the other checks wait on."""
     try:
         doc = _load(text)
     except MarkedYAMLError as err:
-        return [_not_yaml(file, err)]
-    return _key_problems(file, doc) or _schema_problems(file, doc, validator) + _collision_problems(file, doc)
+        return [_not_yaml(file, err)], None
+    problems = _key_problems(file, doc)
+    if problems:
+        return problems, None
+    return _schema_problems(file, doc, validator) + _collision_problems(file, doc), doc
 
 
 def _as_map(value) -> dict:
@@ -437,6 +441,27 @@ def _clashes(env, secrets, shared):
             yield name, target, other
 
 
+def _domain_problems(docs) -> list[Problem]:
+    """A Problem at each domain whose host and path another domain also has, in any project or environment,
+    naming the others. Hosts compare without case, and a domain with no path is at /."""
+    places = {}
+    for file, doc in docs:
+        for env_name, config in _as_map(_as_map(doc).get("environments")).items():
+            for host, settings in _as_map(_as_map(config).get("domains")).items():
+                path = _as_map(settings).get("path") or "/"
+                if isinstance(host, str) and isinstance(path, str):
+                    steps = ["environments", env_name, "domains", host]
+                    places.setdefault((host.lower(), path), []).append((file, doc, steps))
+    problems = []
+    for (host, path), found in places.items():
+        for file, doc, steps in found:
+            others = [f"{_yq(o_steps)} in {o_file}" for o_file, _, o_steps in found if o_steps is not steps]
+            if others:
+                message = f"{host} at {path} is also declared at {'; '.join(others)}"
+                problems.append(Problem(file, _line_at(doc, steps), _yq(steps), message))
+    return problems
+
+
 def check(root: Path) -> list[Problem]:
     """Validate every file the check covers under root, and return every problem in it.
 
@@ -471,6 +496,9 @@ def check(root: Path) -> list[Problem]:
       custom (the message lists them). custom_cert_resolver is required with certificate_type
       custom and rejected otherwise. https: false allows only certificate_type none. path and
       internal_path start with /.
+    - A domain's host and path are unique across every project and environment, comparing hosts
+      without case and reading a missing path as /. Each place is a Problem naming the others. The
+      template and the guide aren't compared, since they use example hosts.
     - The guide has exactly one reference example, fenced ```yaml: a complete project.yaml that
       passes and uses every key the schema allows. No reference, or more than one, is a Problem,
       and so is each key the reference leaves out, named in the message. Its defaults env, secrets,
@@ -480,9 +508,13 @@ def check(root: Path) -> list[Problem]:
     """
     schema = YAML(typ="safe").load(SCHEMA_PATH.read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema)
-    problems = []
+    problems, docs = [], []
     for project in sorted(root.glob("projects/*/project.yaml")):
-        problems += _check_project(project.relative_to(root).as_posix(), project.read_text(encoding="utf-8"), validator)
+        file = project.relative_to(root).as_posix()
+        found, doc = _check_project(file, project.read_text(encoding="utf-8"), validator)
+        problems += found
+        docs.append((file, doc))
+    problems += _domain_problems(docs)
     template = root / TEMPLATE
     if template.is_file():
         problems += _check_text(TEMPLATE, template.read_text(encoding="utf-8"), validator)

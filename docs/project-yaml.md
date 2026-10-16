@@ -143,7 +143,9 @@ environments:
 `domains` is optional under each environment and is keyed by hostname. `port` is required and must
 be from 1 to 65535. Certificate settings must agree: `certificate_type` is `letsencrypt`, `none`,
 or `custom`; custom certificates need `custom_cert_resolver`; `https: false` permits only
-`certificate_type: none`. `path` and `internal_path` start with `/`.
+`certificate_type: none`. `path` and `internal_path` start with `/`. A host and path belong to one
+domain across every project and environment, so staging and production need different hosts. Hosts
+compare without case, and a domain with no `path` is at `/`. The same host on another `path` is fine.
 
 ```yaml excerpt
     domains:

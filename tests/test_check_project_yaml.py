@@ -495,6 +495,67 @@ def test_alias_loop_is_a_problem_not_a_crash(repo, text, path):
     assert "projects/other/project.yaml" in {p.file for p in problems}
 
 
+# Domains across projects
+
+OTHER = "projects/other/project.yaml"
+
+
+def domain_body(host, settings=("port: 3000",)):
+    """An environment body with one domain."""
+    lines = "".join(f"        {s}\n" for s in settings)
+    return f"\n    domains:\n      {host}:\n{lines}"
+
+
+def test_same_host_in_two_projects_fails_at_each_naming_the_other(repo):
+    """A host and path in two projects is a Problem at each place, naming the other file and path."""
+    write(repo, PROJECT, project_yaml(staging=domain_body("app.example.com")))
+    write(repo, OTHER, project_yaml(production=domain_body("app.example.com")))
+    problems = check(repo)
+    here = message_at([p for p in problems if p.file == PROJECT], '.environments.staging.domains["app.example.com"]')
+    there = message_at([p for p in problems if p.file == OTHER], '.environments.production.domains["app.example.com"]')
+    assert OTHER in here and ".environments.production" in here
+    assert PROJECT in there and ".environments.staging" in there
+
+
+def test_same_host_in_both_environments_of_one_project_fails(repo):
+    """staging and production on the same host fail too."""
+    write(repo, PROJECT, project_yaml(staging=domain_body("app.example.com"), production=domain_body("app.example.com")))
+    assert paths(check(repo)) == {
+        '.environments.staging.domains["app.example.com"]',
+        '.environments.production.domains["app.example.com"]',
+    }
+
+
+def test_hosts_compare_without_case(repo):
+    """App.Example.com and app.example.com are the same host."""
+    write(repo, PROJECT, project_yaml(staging=domain_body("App.Example.com")))
+    write(repo, OTHER, project_yaml(staging=domain_body("app.example.com")))
+    assert {p.file for p in check(repo)} == {PROJECT, OTHER}
+
+
+@pytest.mark.parametrize(
+    "first, second, clash",
+    [
+        (["port: 3000", "path: /api"], ["port: 3000"], False),
+        (["port: 3000", "path: /api"], ["port: 3000", "path: /api"], True),
+        (["port: 3000", "path: /"], ["port: 3000"], True),
+    ],
+    ids=["different-path", "same-path", "missing-path-is-root"],
+)
+def test_same_host_on_another_path_passes(repo, first, second, clash):
+    """The same host passes on different paths, and a domain with no path is at /."""
+    write(repo, PROJECT, project_yaml(staging=domain_body("app.example.com", first)))
+    write(repo, OTHER, project_yaml(staging=domain_body("app.example.com", second)))
+    assert bool(check(repo)) == clash
+
+
+def test_template_and_guide_domains_are_not_compared(repo):
+    """The template and the guide use example hosts, so a project on the same host passes."""
+    write(repo, TEMPLATE, project_yaml(staging=domain_body("demo.example.com")))
+    write(repo, PROJECT, project_yaml(staging=domain_body("demo.example.com")))
+    assert check(repo) == []
+
+
 def test_problems_across_files_all_reported(repo):
     """Problems in several files are all reported in one run."""
     write(repo, PROJECT, project_yaml(top="name: demo\n"))
