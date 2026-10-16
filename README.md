@@ -17,7 +17,7 @@ projects/<project>/
   project.yaml    # config, secret names, environments (staging, production)
   release.yaml    # the image each environment runs, tag@digest; written by the deploy bot
 terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
-  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes, domains
+  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes, domains, databases
 .github/workflows/
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand
@@ -29,7 +29,9 @@ tests/            # pytest tests for scripts/
 
 A project's OpenBao side (its policies and empty secret paths) lives in
 [kthaisociety/infrastructure](https://github.com/kthaisociety/infrastructure)'s `terraform/openbao`:
-policies decide what a token can read, so this repo's CI can't write them. It only mints tokens.
+policies decide what a token can read, so this repo's CI can't write them. It mints provider tokens,
+and writes the credentials of the databases it creates to `secret/<project>/<env>/database/*`: nothing
+else in OpenBao.
 
 ## Adding a project
 

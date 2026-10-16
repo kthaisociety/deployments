@@ -21,8 +21,14 @@ defaults:
     LOG_LEVEL: info
   secrets:
     - SESSION_SECRET
+    - DATABASE_URL
+    - REDIS_URL
   shared:
     - SHARED_TOKEN
+  databases:
+    postgres:
+      image: postgres:17-alpine
+    redis: {}
   volumes:
     /data: app-data
 environments:
@@ -49,8 +55,8 @@ environments:
 
 ## Defaults
 
-`defaults` provides values inherited by both environments. `env`, `secrets`, and `shared` are
-required; write `{}` or `[]` when unused. `volumes` is optional and usually belongs in a database.
+`defaults` provides values inherited by both environments. `env`, `secrets`, `shared` and
+`databases` are required; write `{}` or `[]` when unused. `volumes` is optional and usually belongs in a database.
 
 ```yaml excerpt
 defaults:
@@ -60,8 +66,14 @@ defaults:
     LOG_LEVEL: info
   secrets:
     - SESSION_SECRET
+    - DATABASE_URL
+    - REDIS_URL
   shared:
     - SHARED_TOKEN
+  databases:
+    postgres:
+      image: postgres:17-alpine
+    redis: {}
   volumes:
     /data: app-data
 ```
@@ -82,11 +94,14 @@ their values. Environment values override defaults with the same name. A name be
 ## Secrets
 
 `secrets` lists secret names required by the project. Put the names here once; values for each
-environment live in OpenBao.
+environment live in OpenBao, at `secret/<project>/<environment>`. A name that one of the project's
+[databases](#databases) writes, such as `DATABASE_URL`, reads that database's credentials instead.
 
 ```yaml excerpt
   secrets:
     - SESSION_SECRET
+    - DATABASE_URL
+    - REDIS_URL
 ```
 
 ## Shared secrets
@@ -98,6 +113,37 @@ use. To add a new shared value, ask an infra admin to set it in the OpenBao UI.
 ```yaml excerpt
   shared:
     - SHARED_TOKEN
+```
+
+## Databases
+
+`databases` gives each environment its own database for every engine listed, `postgres` and `redis`.
+It sits under `defaults` only: the code relies on it, so staging and production have the same
+engines, each with its own instance and credentials. `image` is optional and replaces the default
+image (`postgres:17-alpine`, `redis:7-alpine`).
+
+The pipeline generates every credential and writes it to OpenBao at
+`secret/<project>/<environment>/database/<engine>`. Nobody sees or types it. The app gets a setting
+only when its name is listed in `secrets`, so `project.yaml` shows everything the app reads. List the
+ones the app's client reads:
+
+| Engine | Names it writes |
+|---|---|
+| `postgres` | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `DATABASE_URL` |
+| `redis` | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_URL` |
+
+libpq and pgx read the `PG*` names with no configuration. The check fails on a listed name whose
+engine isn't under `databases`, on an engine with none of its names listed, and on an engine's name
+in `env` or `shared`.
+
+Removing an engine, or the project, fails the plan instead of deleting the data. Deleting a database
+is a deliberate change of its own, reviewed by Platform.
+
+```yaml excerpt
+  databases:
+    postgres:
+      image: postgres:17-alpine
+    redis: {}
 ```
 
 ## Volumes

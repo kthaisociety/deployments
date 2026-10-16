@@ -11,6 +11,11 @@ terraform {
       # 1.8 targets Dokploy v0.30.8, the version we run.
       version = "~> 1.8.0"
     }
+    # Ephemeral random_password: database passwords that never reach the plan or state.
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.7"
+    }
   }
 
   # The same bucket and CI credential as kthaisociety/infrastructure, under its own key and its own

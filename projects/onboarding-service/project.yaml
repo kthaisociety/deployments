@@ -18,6 +18,7 @@ defaults:
   # Values in OpenBao at secret/shared/<environment>, which every project can read.
   shared:
     - ONBOARDING_SERVICE_SECRET
+  databases: {}
   # SQLite.
   volumes:
     /data: data
