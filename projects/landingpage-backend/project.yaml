@@ -1,0 +1,76 @@
+# landingpage-backend: API backend for kthais.com.
+# Note: runs a daily background scheduler (StartDailyTeamQuestionsScheduler), so staging and production
+# must never point at the same database as the old UI-managed app while it is running (app-migration.md §1.2).
+repo: kthaisociety/landingpage-backend
+
+# For every environment unless it says otherwise.
+defaults:
+  env:
+    GIN_MODE: release
+    SERVER_PORT: "8080"
+    DEVELOPMENT_MODE: "false"
+    SECURE_COOKIE: "true"
+    TRUSTED_PROXY_HOST: dokploy-traefik
+    OAUTH_RATE_LIMIT_REQUESTS: "5"
+    SES_REGION: eu-north-1
+    SES_SENDER: applications@kthais.com
+    SES_REPLY_TO: contact@kthais.com
+    MAILCHIMP_USER: kthais
+    DB_PORT: "5432"
+    DB_USER: postgres
+    DB_NAME: kthais
+    DB_SSLMODE: disable
+    REDIS_PORT: "6379"
+  # Names only. Values in OpenBao at secret/landingpage-backend/<environment>.
+  secrets:
+    - DB_PASSWORD
+    - REDIS_PASSWORD
+    - GOOGLE_CLIENT_ID
+    - GOOGLE_CLIENT_SECRET
+    - SESSION_KEY
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - MAILCHIMP_API_KEY
+    - MAILCHIMP_LIST_ID
+    - LUMA_API_KEY
+    - LUMA_MEMBERS_TIER_ID
+    - JWT_PRIVATE_KEY
+    - JWT_PUBLIC_KEY
+    - MCP_SERVICE_SECRET
+    - R2_Access_Key_Id
+    - R2_Secret_Access_Key
+    - R2_Endpoint
+    - R2_Bucket
+    - R2_Account_Id
+  # secret/shared/onboarding-service-secret/<environment>, also read by onboarding-service.
+  shared:
+    onboarding-service-secret: [ONBOARDING_SERVICE_SECRET]
+
+environments:
+  # Staging secrets in OpenBao must be inert (dummy SES/Mailchimp/Luma keys, staging OAuth client,
+  # separate JWT/session/MCP keys) and use its own isolated Postgres/Redis containers.
+  staging:
+    env:
+      BACKEND_URL: https://staging-api.kthais.com
+      FRONTEND_URL: https://staging.kthais.com
+      ALLOWED_ORIGINS: https://staging.kthais.com,https://staging-api.kthais.com
+      # Replace <staging-suffix> with the 6-char suffix from deployments' `projects` output.
+      ONBOARDING_SERVICE_URL: http://onboarding-service-staging-<staging-suffix>:8000
+      DB_HOST: landingpage-backend-staging-postgres
+      REDIS_HOST: landingpage-backend-staging-redis
+    domains:
+      staging-api.kthais.com:
+        port: 8080
+  production:
+    env:
+      BACKEND_URL: https://api.kthais.com
+      FRONTEND_URL: https://kthais.com
+      COOKIE_DOMAIN: .kthais.com
+      ALLOWED_ORIGINS: https://kthais.com,https://api.kthais.com
+      ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000
+      DB_HOST: landingpage-backend-production-postgres
+      REDIS_HOST: landingpage-backend-production-redis
+    # Added at the switchover (app-migration.md §5.3 & §7.5), after removing the domain from the old app:
+    # domains:
+    #   api.kthais.com:
+    #     port: 8080

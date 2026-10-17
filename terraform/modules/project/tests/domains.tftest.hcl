@@ -2,6 +2,8 @@
 # no secrets, so the check job runs these on every PR.
 
 mock_provider "vault" {}
+mock_provider "random" {}
+mock_provider "tls" {}
 # Plan only: a mock apply fails on dokploy_vault_provider's write-only token_wo. The app's id is fixed so
 # a plan knows it.
 mock_provider "dokploy" {

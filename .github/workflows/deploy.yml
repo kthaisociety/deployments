@@ -23,6 +23,8 @@ on:
         type: choice
         options:
           - onboarding-service
+          - landingpage-backend
+          - landingpage-frontend
       environment:
         description: Environment.
         required: true

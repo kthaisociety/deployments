@@ -1,0 +1,33 @@
+# landingpage-frontend: Next.js web application for kthais.com.
+repo: kthaisociety/landingpage-frontend
+
+# For every environment unless it says otherwise.
+defaults:
+  env:
+    NODE_ENV: production
+    PORT: "3000"
+    HOSTNAME: 0.0.0.0
+  # Names only. Values in OpenBao at secret/landingpage-frontend/<environment>.
+  secrets:
+    - JWT_SECRET
+    - JWT_PUBLIC_KEY
+    - LUMA_API_KEY
+
+environments:
+  staging:
+    env:
+      NEXT_PUBLIC_API_URL: https://staging-api.kthais.com
+      # Replace <staging-suffix> with the 6-char suffix from deployments' `projects` output.
+      ONBOARDING_SERVICE_URL: http://onboarding-service-staging-<staging-suffix>:8000
+    domains:
+      staging.kthais.com:
+        port: 3000
+  production:
+    env:
+      NEXT_PUBLIC_API_URL: https://api.kthais.com
+      ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000
+    # Added at the switchover (app-migration.md §5.3 & §7.5), after removing the domain from the old app:
+    # domains:
+    #   kthais.com:
+    #     port: 3000
+
