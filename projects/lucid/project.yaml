@@ -1,0 +1,24 @@
+# lucid: the business team's CRM. One image: the Go API under /api, the React frontend on every other path.
+repo: kthaisociety/lucid
+
+defaults:
+  env: {}
+  secrets:
+    - DATABASE_URL
+    - REDIS_URL
+  shared: []
+  databases:
+    postgres: {}
+    redis: {}
+
+environments:
+  staging:
+    env:
+      PUBLIC_URL: https://lucid-staging.kthais.com
+    domains:
+      lucid-staging.kthais.com: {port: 8000}
+  production:
+    env:
+      PUBLIC_URL: https://lucid.kthais.com
+    domains:
+      lucid.kthais.com: {port: 8000}
