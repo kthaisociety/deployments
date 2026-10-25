@@ -32,6 +32,57 @@ variable "config" {
     ]))
     error_message = "A domain in project.yaml has an unknown setting. Allowed: port, https, certificate_type, custom_cert_resolver, path, internal_path, strip_path, enabled, forward_auth_enabled, custom_entrypoint."
   }
+  # Databases (databases.tf). What the code relies on is the same everywhere, so only under defaults.
+  validation {
+    condition     = alltrue([for e, c in var.config.environments : try(c.databases, null) == null])
+    error_message = "databases go under defaults, not under an environment: staging and production each get their own, with the same engines."
+  }
+  validation {
+    condition     = alltrue([for engine in keys(try(var.config.defaults.databases, {})) : contains(keys(local.database_keys), engine)])
+    error_message = "databases in project.yaml has an unknown engine. Allowed: ${join(", ", keys(local.database_keys))}."
+  }
+  validation {
+    condition = alltrue(flatten([
+      for engine, s in try(var.config.defaults.databases, {}) : [
+        can(keys(s)) || s == null ? true : false,
+        [for k in try(keys(s), []) : contains(["image"], k)],
+      ]
+    ]))
+    error_message = "A database in project.yaml has an unknown setting, or isn't a map. Allowed: image. Write {} for none."
+  }
+  # The app gets a database setting only by listing it in secrets. A name an engine writes must not
+  # quietly read secret/<project>/<env> because its engine is missing, and an engine nobody reads is a
+  # mistake.
+  validation {
+    condition = alltrue(flatten([
+      for engine, ks in local.database_keys : [
+        for k in ks : contains(keys(try(var.config.defaults.databases, {})), engine) || alltrue([
+          for c in concat([try(var.config.defaults, {})], values(var.config.environments)) : !contains(try(c.secrets, []), k)
+        ])
+      ]
+    ]))
+    error_message = "secrets in project.yaml lists a name a database writes (${join(", ", flatten(values(local.database_keys)))}), but its engine isn't under defaults.databases. Add the engine, or rename the secret."
+  }
+  validation {
+    condition = alltrue([
+      for engine in keys(try(var.config.defaults.databases, {})) : anytrue([
+        for k in try(local.database_keys[engine], []) : contains(try(var.config.defaults.secrets, []), k)
+      ])
+    ])
+    error_message = "A database under defaults.databases has none of its settings in defaults.secrets, so the app can't reach it. List the ones it reads: ${join("; ", [for engine, ks in local.database_keys : "${engine}: ${join(", ", ks)}"])}."
+  }
+  # An enabled engine's name in env or shared would give the app that value instead of the database's.
+  validation {
+    condition = alltrue(flatten([
+      for engine in keys(try(var.config.defaults.databases, {})) : [
+        for c in concat([try(var.config.defaults, {})], values(var.config.environments)) : [
+          for k in try(local.database_keys[engine], []) :
+          !contains(keys(try(c.env, {})), k) && !contains(try(c.shared, []), k)
+        ]
+      ]
+    ]))
+    error_message = "env or shared in project.yaml sets a name an enabled database writes. List it in defaults.secrets instead: the app gets it from the database's secret in OpenBao."
+  }
 }
 
 variable "release" {

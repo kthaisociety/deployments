@@ -3,7 +3,8 @@
 The schema is the list of what project.yaml may contain: closed at every level, so an unknown key
 fails. It is stricter than modules/project, which still accepts per-environment secrets, shared secrets,
 volumes and other environment names. The rules JSON Schema can't express live here (ADR-0001): a name
-in two of env, secrets and shared, and a domain's host and path declared twice across projects.
+in two of env, secrets and shared, a database setting listed without its engine (or the reverse), and a
+domain's host and path declared twice across projects.
 """
 
 import ast
@@ -27,6 +28,13 @@ GUIDE = "docs/project-yaml.md"
 PLAIN_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 TYPE_NAMES = {"array": "list", "object": "map"}
 DEFAULTS_ONLY_KEYS = ("secrets", "shared", "volumes")
+# The settings each database engine writes to OpenBao, as in terraform/modules/project/databases.tf. An
+# app reads one by listing its name in secrets.
+DATABASE_KEYS = {
+    "postgres": ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "DATABASE_URL"),
+    "redis": ("REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_URL"),
+}
+KEY_ENGINE = {key: engine for engine, keys in DATABASE_KEYS.items() for key in keys}
 MUST_SHOW_ENTRY = ("env", "secrets", "shared", "volumes")
 REFERENCE_FENCE = "yaml"
 EXCERPT_FENCE = "yaml excerpt"
@@ -126,6 +134,8 @@ def _blank_message(types) -> str:
 def _unknown_key_message(parent, key, allowed) -> str:
     if parent == ["defaults"] and key == "domains":
         return "domains belong under an environment, not under defaults. A default domain gives every environment the same host."
+    if len(parent) == 2 and parent[0] == "environments" and key == "databases":
+        return "databases are declared under defaults: staging and production each get their own, with the same engines. Remove it here."
     if len(parent) == 2 and parent[0] == "environments" and key in DEFAULTS_ONLY_KEYS:
         return f"{key} is declared under defaults, and each environment sets its values in OpenBao. Remove it here."
     return f"unknown key. Allowed here: {', '.join(allowed)}"
@@ -156,6 +166,8 @@ def _value_message(error, parent) -> str:
         if _is_env_value(parent) and not isinstance(error.instance, (dict, list)):
             return f"expected string, got {_got(error.instance)}; quote this value"
         return f"expected {_expected(error.validator_value)}, got {_got(error.instance)}"
+    if error.validator == "minLength":
+        return "must not be empty"
     if error.validator in ("minimum", "maximum"):
         return f"must be {_bounds(error.schema)}, got {error.instance}"
     if error.validator == "enum":
@@ -287,7 +299,7 @@ def _check_project(file, text, validator) -> tuple[list[Problem], object]:
     problems = _key_problems(file, doc)
     if problems:
         return problems, None
-    return _schema_problems(file, doc, validator) + _collision_problems(file, doc), doc
+    return _schema_problems(file, doc, validator) + _collision_problems(file, doc) + _database_problems(file, doc), doc
 
 
 def _as_map(value) -> dict:
@@ -396,7 +408,7 @@ def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]
     problems = _key_problems(GUIDE, doc, ref_line)
     if problems:
         return problems
-    problems = _schema_problems(GUIDE, doc, validator, ref_line)
+    problems = _schema_problems(GUIDE, doc, validator, ref_line) + _database_problems(GUIDE, doc, ref_line)
     if doc is None:
         return problems
     for steps, message in _missing_reference_keys(doc, schema, schema):
@@ -426,6 +438,43 @@ def _excerpt_problems(excerpts, reference) -> list[Problem]:
         for line, body in excerpts
         if not _is_run_of(_unindented(body), ref_lines)
     ]
+
+
+def _database_problems(file, doc, offset=0) -> list[Problem]:
+    """A Problem for each database setting the app can't get, or would get from the wrong place.
+
+    An app reads a setting an engine writes by listing its name in defaults.secrets. So: a listed name
+    whose engine isn't under defaults.databases (it would read the app's own secret, where it isn't), an
+    engine none of whose names are listed (nothing reads it), and an enabled engine's name in env or
+    shared rather than in secrets. A name in both secrets and env or shared is the collision rule's.
+    """
+    defaults = _as_map(_as_map(doc).get("defaults"))
+    engines = {engine for engine in _as_map(defaults.get("databases")) if engine in DATABASE_KEYS}
+    listed = _as_list(defaults.get("secrets"))
+    secrets = [name for name in listed if isinstance(name, str)]
+    problems = []
+    # The index into the list as written, so a problem lands on its own entry.
+    for i, name in enumerate(listed):
+        engine = KEY_ENGINE.get(name) if isinstance(name, str) else None
+        if engine and engine not in engines:
+            steps = ["defaults", "secrets", i]
+            message = f"{name} is a setting {engine} writes, but {engine} isn't under defaults.databases. Add {engine}: {{}} there, or give this secret another name"
+            problems.append(Problem(file, _line_at(doc, steps) + offset, _yq(steps), message))
+    for engine in sorted(engines):
+        if not any(name in secrets for name in DATABASE_KEYS[engine]):
+            steps = ["defaults", "databases", engine]
+            message = f"none of {engine}'s settings are in defaults.secrets, so the app can't reach it. List the ones it reads: {', '.join(DATABASE_KEYS[engine])}"
+            problems.append(Problem(file, _line_at(doc, steps) + offset, _yq(steps), message))
+    places = [(["defaults", "env", name], name) for name in _as_map(defaults.get("env"))]
+    places += [(["defaults", "shared", i], name) for i, name in enumerate(_as_list(defaults.get("shared")))]
+    for env_name, config in _as_map(_as_map(doc).get("environments")).items():
+        places += [(["environments", env_name, "env", name], name) for name in _as_map(_as_map(config).get("env"))]
+    for steps, name in places:
+        engine = KEY_ENGINE.get(name) if isinstance(name, str) else None
+        if engine in engines and name not in secrets:
+            message = f"{name} is a setting {engine} writes to OpenBao. List it in defaults.secrets instead"
+            problems.append(Problem(file, _line_at(doc, steps) + offset, _yq(steps), message))
+    return problems
 
 
 def _collision_problems(file, doc) -> list[Problem]:
@@ -518,7 +567,7 @@ def check(root: Path) -> list[Problem]:
     - domains under defaults says it belongs under an environment.
     - secrets, shared or volumes under an environment says to declare the names under defaults
       and set per-environment values in OpenBao.
-    - A missing or null skeleton key (repo; defaults with env, secrets and shared; environments
+    - A missing or null skeleton key (repo; defaults with env, secrets, shared and databases; environments
       with staging and production) is named, and a null one says to write {} or []. volumes is
       optional under defaults.
     - An environment other than staging or production names the two allowed.
@@ -528,6 +577,12 @@ def check(root: Path) -> list[Problem]:
       a name in two of env, secrets and shared is a Problem at the env key when env is one of the
       two, otherwise at the shared entry, and its message gives the other one's path.
     - A name listed twice in secrets, or twice in shared, is a Problem naming it.
+    - databases sits under defaults only, with known engines (postgres, redis) whose only setting is
+      image. databases under an environment says to declare it under defaults.
+    - In a project, the template and the guide reference: a name in defaults.secrets that an engine
+      writes (DATABASE_KEYS) needs that engine under defaults.databases; an engine needs at least one
+      of its names in defaults.secrets; and an enabled engine's name in env or shared, but not in
+      secrets, says to list it in secrets. Each is a Problem at the offending entry.
     - A domain needs port, an integer from 1 to 65535. certificate_type is letsencrypt, none or
       custom (the message lists them). custom_cert_resolver is required with certificate_type
       custom and rejected otherwise. https: false allows only certificate_type none. path and

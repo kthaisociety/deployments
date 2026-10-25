@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from check_project_yaml import check
+from check_project_yaml import DATABASE_KEYS, check
 
 REPO = Path(__file__).resolve().parent.parent
 COMMAND = REPO / "scripts" / "check-project-yaml"
@@ -22,6 +22,7 @@ defaults:
   env: {}
   secrets: []
   shared: []
+  databases: {}
   volumes: {}
 environments:
   staging: {}
@@ -37,8 +38,14 @@ defaults:
     MODE: release
   secrets:
     - TOKEN
+    - DATABASE_URL
+    - REDIS_URL
   shared:
     - SHARED_TOKEN
+  databases:
+    postgres:
+      image: postgres:16-alpine
+    redis: {}
   volumes:
     /data: data
 environments:
@@ -70,7 +77,7 @@ def project_yaml(*, top="", defaults="", staging=" {}", production=" {}"):
     """MINIMAL with extra lines at the top level and under defaults, and each environment's body."""
     return (
         f"repo: example/demo\n{top}"
-        "defaults:\n  env: {}\n  secrets: []\n  shared: []\n  volumes: {}\n"
+        "defaults:\n  env: {}\n  secrets: []\n  shared: []\n  databases: {}\n  volumes: {}\n"
         f"{defaults}"
         f"environments:\n  staging:{staging}\n  production:{production}\n"
     )
@@ -251,7 +258,7 @@ def test_per_environment_secrets_point_to_defaults_and_openbao(repo, key, body):
     "removed, path, name",
     [
         ("repo: example/demo\n", ".repo", "repo"),
-        ("defaults:\n  env: {}\n  secrets: []\n  shared: []\n  volumes: {}\n", ".defaults", "defaults"),
+        ("defaults:\n  env: {}\n  secrets: []\n  shared: []\n  databases: {}\n  volumes: {}\n", ".defaults", "defaults"),
         ("  env: {}\n", ".defaults.env", "env"),
         ("  secrets: []\n", ".defaults.secrets", "secrets"),
         ("  shared: []\n", ".defaults.shared", "shared"),
@@ -450,6 +457,129 @@ def test_path_without_leading_slash_fails(repo, key):
     assert f"{DOMAIN}.{key}" in paths(check(repo))
 
 
+# Databases
+
+
+def with_databases(secrets, databases, extra=""):
+    """MINIMAL with the given secrets and databases lines under defaults, plus extra lines there."""
+    return MINIMAL.replace("  secrets: []", f"  secrets: {secrets}").replace(
+        "  databases: {}", f"  databases: {databases}{extra}"
+    )
+
+
+def test_database_with_its_names_passes(repo):
+    """An engine whose names the app lists in secrets passes, and so do the names."""
+    write(repo, PROJECT, with_databases("[TOKEN, DATABASE_URL, PGHOST, REDIS_URL]", "{postgres: {}, redis: {image: redis:8}}"))
+    assert check(repo) == []
+
+
+def test_database_under_an_environment_says_defaults(repo):
+    """databases under an environment says to declare it under defaults."""
+    write(repo, PROJECT, project_yaml(staging="\n    databases:\n      postgres: {}\n"))
+    assert "under defaults" in message_at(check(repo), ".environments.staging.databases")
+
+
+def test_unknown_engine_lists_the_known_ones(repo):
+    """An engine the pipeline doesn't run lists the ones it does."""
+    write(repo, PROJECT, with_databases("[MONGODB_URI]", "{mongo: {}}"))
+    message = message_at(check(repo), ".defaults.databases.mongo")
+    assert "postgres" in message and "redis" in message
+
+
+def test_unknown_database_setting_lists_image(repo):
+    """A database setting other than image lists image."""
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {version: 17}}"))
+    assert "image" in message_at(check(repo), ".defaults.databases.postgres.version")
+
+
+def test_empty_database_image_fails(repo):
+    """An empty image says it must not be empty."""
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", '{postgres: {image: ""}}'))
+    assert "empty" in message_at(check(repo), ".defaults.databases.postgres.image")
+
+
+def test_missing_databases_is_named(repo):
+    """defaults without databases names it."""
+    write(repo, PROJECT, MINIMAL.replace("  databases: {}\n", ""))
+    assert "databases" in message_at(check(repo), ".defaults.databases")
+
+
+def test_database_name_without_its_engine_fails(repo):
+    """A name an engine writes, listed in secrets while that engine isn't enabled, names the engine."""
+    write(repo, PROJECT, with_databases("[REDIS_URL, DATABASE_URL]", "{redis: {}}"))
+    problems = check(repo)
+    assert paths(problems) == {".defaults.secrets[1]"}
+    assert "postgres" in problems[0].message
+
+
+def test_database_name_problem_lands_on_its_own_entry(repo):
+    """A non-string entry before a database name doesn't move the database problem onto it."""
+    write(repo, PROJECT, with_databases("\n    - 42\n    - DATABASE_URL", "{}"))
+    problems = check(repo)
+    assert "postgres" in message_at(problems, ".defaults.secrets[1]")
+    assert [p.line for p in problems if p.path == ".defaults.secrets[1]"] == [6]
+
+
+def test_engine_without_a_listed_name_lists_them(repo):
+    """An engine none of whose names are in secrets fails at the engine, listing its names."""
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {}, redis: {}}"))
+    message = message_at(check(repo), ".defaults.databases.redis")
+    assert "REDIS_URL" in message and "REDIS_HOST" in message
+
+
+@pytest.mark.parametrize(
+    "text, path",
+    [
+        (
+            with_databases("[PGHOST]", "{postgres: {}}").replace("  env: {}", "  env:\n    DATABASE_URL: x"),
+            ".defaults.env.DATABASE_URL",
+        ),
+        (
+            with_databases("[PGHOST]", "{postgres: {}}").replace("  shared: []", "  shared: [DATABASE_URL]"),
+            ".defaults.shared[0]",
+        ),
+        (
+            with_databases("[PGHOST]", "{postgres: {}}").replace(
+                "  staging: {}", "  staging:\n    env:\n      PGPASSWORD: x"
+            ),
+            ".environments.staging.env.PGPASSWORD",
+        ),
+    ],
+    ids=["defaults-env", "shared", "environment-env"],
+)
+def test_enabled_engines_name_outside_secrets_says_list_it(repo, text, path):
+    """An enabled engine's name in env or shared, but not in secrets, says to list it in secrets."""
+    write(repo, PROJECT, text)
+    assert "defaults.secrets" in message_at(check(repo), path)
+
+
+def test_disabled_engines_name_in_env_passes(repo):
+    """Without the engine, its names in env are ordinary values, such as an external database's URL."""
+    write(repo, PROJECT, MINIMAL.replace("  env: {}", "  env:\n    DATABASE_URL: postgresql://elsewhere"))
+    assert check(repo) == []
+
+
+def test_database_name_in_secrets_and_env_is_one_collision(repo):
+    """A name in secrets and env is the collision rule's problem alone, not a database one too."""
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {}}").replace("  env: {}", "  env:\n    DATABASE_URL: x"))
+    problems = check(repo)
+    assert paths(problems) == {".defaults.env.DATABASE_URL"}
+    assert len(problems) == 1
+
+
+def test_template_database_rules_apply(repo):
+    """The template gets the database rules too: every project copied from it would fail."""
+    write(repo, TEMPLATE, with_databases("[TOKEN]", "{postgres: {}}"))
+    assert paths(p for p in check(repo) if p.file == TEMPLATE) == {".defaults.databases.postgres"}
+
+
+def test_guide_reference_database_rules_apply_at_guide_line(repo):
+    """The guide reference gets the database rules, at the line in the markdown."""
+    write(repo, GUIDE, guide(("yaml", FULL.replace("    - REDIS_URL\n", ""))))
+    problems = [p for p in check(repo) if p.file == GUIDE]
+    assert [(p.path, p.line) for p in problems] == [(".defaults.databases.redis", 17)]
+
+
 # Files and reporting
 
 
@@ -486,7 +616,7 @@ def test_non_string_key_says_quote_it(repo, key):
     """A key YAML reads as a number, boolean, null or date fails at its line and says to quote it."""
     write(repo, PROJECT, project_yaml(staging=f"\n    env:\n      {key}: x\n"))
     problems = [p for p in check(repo) if p.file == PROJECT]
-    assert [(p.path, p.line) for p in problems] == [(f".environments.staging.env[{key}]", 10)]
+    assert [(p.path, p.line) for p in problems] == [(f".environments.staging.env[{key}]", 11)]
     assert "quote" in problems[0].message.lower()
 
 
@@ -587,13 +717,13 @@ def test_problems_across_files_all_reported(repo):
 def test_problem_line_points_at_offending_key(repo):
     """A problem's line is the line of the offending key."""
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
-    assert [p.line for p in check(repo) if p.path == ".defaults.secret"] == [7]
+    assert [p.line for p in check(repo) if p.path == ".defaults.secret"] == [8]
 
 
 def test_broken_guide_example_reported_at_guide_line(repo):
     """A guide example that breaks the schema fails at its line in the markdown."""
     write(repo, GUIDE, f"# project.yaml\n\nIntro.\n\n```yaml\n{project_yaml(defaults='  secret: []\n')}```\n")
-    assert (GUIDE, 12) in {(p.file, p.line) for p in check(repo)}
+    assert (GUIDE, 13) in {(p.file, p.line) for p in check(repo)}
 
 
 def test_guide_reference_not_yaml_reported_at_guide_line(repo):
@@ -639,7 +769,7 @@ def test_reference_missing_key_is_named(repo, line, key):
     "filled, empty, path, key",
     [
         ("  env:\n    MODE: release\n", "  env: {}\n", ".defaults.env", "env"),
-        ("  secrets:\n    - TOKEN\n", "  secrets: []\n", ".defaults.secrets", "secrets"),
+        ("  secrets:\n    - TOKEN\n    - DATABASE_URL\n    - REDIS_URL\n", "  secrets: []\n", ".defaults.secrets", "secrets"),
         ("  shared:\n    - SHARED_TOKEN\n", "  shared: []\n", ".defaults.shared", "shared"),
         ("  volumes:\n    /data: data\n", "  volumes: {}\n", ".defaults.volumes", "volumes"),
     ],
@@ -781,7 +911,7 @@ def test_command_prints_workflow_commands_in_ci(repo):
     """With GITHUB_ACTIONS=true each problem prints as a ::error workflow command."""
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
     out = run_command(repo, GITHUB_ACTIONS="true").stdout
-    assert f"::error file={PROJECT},line=7::.defaults.secret: " in out
+    assert f"::error file={PROJECT},line=8::.defaults.secret: " in out
 
 
 def test_command_escapes_workflow_commands_in_ci(repo):
@@ -802,7 +932,7 @@ def test_command_omits_line_in_ci_when_problem_has_none(repo):
 def test_command_prints_file_line_locally(repo):
     """Outside GitHub Actions each problem prints as <file>:<line>: <path>: <message>."""
     write(repo, PROJECT, project_yaml(defaults="  secret: []\n"))
-    assert f"{PROJECT}:7: .defaults.secret: " in run_command(repo).stdout
+    assert f"{PROJECT}:8: .defaults.secret: " in run_command(repo).stdout
 
 
 def test_command_omits_line_locally_when_problem_has_none(repo):
@@ -820,6 +950,7 @@ GUIDE_AREAS = [
     "env",
     "secrets",
     "shared secrets",
+    "databases",
     "volumes",
     "environments",
     "domains",
@@ -865,3 +996,11 @@ def test_schema_domain_settings_match_module(repo):
     write(repo, PROJECT, project_yaml(staging=staging_domain(["port: 3000", "bogus: 1"])))
     allowed = message_at(check(repo), f"{DOMAIN}.bogus").split("Allowed here: ")[1].split(", ")
     assert sorted(allowed) == sorted(module)
+
+
+def test_database_keys_match_module():
+    """The names each engine writes are exactly the ones terraform/modules/project/databases.tf writes."""
+    databases = (REPO / "terraform/modules/project/databases.tf").read_text()
+    block = re.search(r"database_keys = \{(.*?)\n  \}", databases, re.S).group(1)
+    module = {engine: tuple(re.findall(r'"([A-Z_]+)"', keys)) for engine, keys in re.findall(r"(\w+)\s*=\s*\[([^\]]*)\]", block)}
+    assert module == DATABASE_KEYS
