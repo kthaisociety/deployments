@@ -1,0 +1,20 @@
+# pyrmit: the Next.js frontend. Reads no env or secrets at runtime. The API is the pyrmit-backend project on
+# the same host under /api (Traefik routes by path), so the build-time API_PROXY_TARGET rewrite is never used.
+repo: kthaisociety/pyrmit
+
+defaults:
+  env: {}
+  secrets: []
+  shared: []
+  databases: {}
+
+environments:
+  staging:
+    domains:
+      migration.pyrmit-staging.kthais.com:
+        port: 3000
+
+  production:
+    domains:
+      migration.pyrmit.kthais.com:
+        port: 3000

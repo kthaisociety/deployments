@@ -24,6 +24,8 @@ on:
         options:
           - lucid
           - onboarding-service
+          - pyrmit
+          - pyrmit-backend
       environment:
         description: Environment.
         required: true
