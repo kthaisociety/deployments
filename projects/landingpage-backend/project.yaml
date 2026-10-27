@@ -1,0 +1,81 @@
+# landingpage-backend: the Go API behind kthais.com. The browser calls it on its own host (production keeps
+# api.kthais.com; staging is landingpage-backend-staging.kthais.com). The frontend's middleware reads the jwt
+# cookie it sets, so both share COOKIE_DOMAIN, and JWT_COOKIE_NAME differs per environment to keep staging
+# and production sessions apart.
+# Runs a daily background scheduler (Team Questions): it must never run next to the old UI-managed app
+# against the same data (app-migration.md §1.3, §6.5).
+# Production's domain is added in its own PR at the switchover (app-migration.md §7.4).
+repo: kthaisociety/landingpage-backend
+
+# For every environment unless it says otherwise.
+defaults:
+  env:
+    GIN_MODE: release
+    SERVER_PORT: "8080"
+    DEVELOPMENT_MODE: "false"
+    SECURE_COOKIE: "true"
+    COOKIE_DOMAIN: .kthais.com
+    TRUSTED_PROXY_HOST: dokploy-traefik
+    OAUTH_RATE_LIMIT_REQUESTS: "5"
+    SES_REGION: eu-north-1
+    SES_SENDER: applications@kthais.com
+    SES_REPLY_TO: contact@kthais.com
+    MAILCHIMP_USER: kthais
+    # DATABASE_URL has no sslmode; the backend adds this one. Dokploy's Postgres has no TLS.
+    DB_SSLMODE: disable
+
+  # Names only. Values in OpenBao at secret/landingpage-backend/<environment>; DATABASE_URL and REDIS_* are
+  # written by the pipeline under .../database/.
+  secrets:
+    - DATABASE_URL
+    - REDIS_HOST
+    - REDIS_PORT
+    - REDIS_PASSWORD
+    - GOOGLE_CLIENT_ID
+    - GOOGLE_CLIENT_SECRET
+    - SESSION_KEY
+    - JWT_PRIVATE_KEY
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - MAILCHIMP_API_KEY
+    - MAILCHIMP_LIST_ID
+    - LUMA_API_KEY
+    - LUMA_MEMBERS_TIER_ID
+    - MCP_SERVICE_SECRET
+    # Cloudflare R2 until object storage moves to GleSYS (IT-39).
+    - R2_Access_Key_Id
+    - R2_Secret_Access_Key
+    - R2_Endpoint
+    - R2_Bucket
+
+  # Values in OpenBao at secret/shared/<environment>, which every project can read.
+  # JWT_PUBLIC_KEY: also read by landingpage-frontend; pairs with JWT_PRIVATE_KEY above.
+  # ONBOARDING_SERVICE_SECRET: also read by onboarding-service (both directions).
+  shared:
+    - JWT_PUBLIC_KEY
+    - ONBOARDING_SERVICE_SECRET
+
+  databases:
+    postgres: {}
+    redis: {}
+
+environments:
+  # Staging secrets are new and inert: a staging OAuth client, its own JWT pair and session/MCP keys,
+  # dummy SES/Mailchimp/Luma keys.
+  staging:
+    env:
+      BACKEND_URL: https://landingpage-backend-staging.kthais.com
+      FRONTEND_URL: https://landingpage-frontend-staging.kthais.com
+      ALLOWED_ORIGINS: https://landingpage-frontend-staging.kthais.com,https://landingpage-backend-staging.kthais.com
+      JWT_COOKIE_NAME: jwt_staging
+      ONBOARDING_SERVICE_URL: http://onboarding-service-staging-fm3uek:8000
+    domains:
+      landingpage-backend-staging.kthais.com: {port: 8080}
+
+  production:
+    env:
+      BACKEND_URL: https://api.kthais.com
+      FRONTEND_URL: https://kthais.com
+      ALLOWED_ORIGINS: https://kthais.com,https://api.kthais.com
+      JWT_COOKIE_NAME: jwt
+      ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000

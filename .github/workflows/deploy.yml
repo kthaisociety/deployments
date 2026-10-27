@@ -22,6 +22,8 @@ on:
         required: true
         type: choice
         options:
+          - landingpage-backend
+          - landingpage-frontend
           - lucid
           - onboarding-service
       environment:
