@@ -22,9 +22,9 @@
 # its credentials. Deleting them is a deliberate `removed` block, reviewed on its own.
 #
 # Backups: production's Postgres is dumped to GleSYS object storage, through the Dokploy destination
-# kthaisociety/infrastructure keeps (its docs/database-backups.md, restoring included): every fifth day
-# unless databases.postgres.backups sets its own schedule and how many dumps to keep. Staging isn't backed
-# up, nor is Redis.
+# kthaisociety/infrastructure keeps (its docs/database-backups.md, restoring included): every day unless
+# databases.postgres.backups sets its own schedule and how many dumps to keep. Staging isn't backed up,
+# nor is Redis.
 
 locals {
   databases = try(local.defaults.databases, {})
@@ -154,9 +154,8 @@ locals {
   # Production's, always: backups (schedule, keep) can change when and how many, not whether.
   postgres_backups = {
     for e, c in local.postgres : e => {
-      # Every fifth day at 00:00 UTC (Dokploy's clock), like kthais-backend's: the 1st, 6th, ..., 26th
-      # and 31st of each month. The last 30 kept: about five months.
-      schedule = coalesce(try(c.backups.schedule, null), "0 0 */5 * *")
+      # Every day at 00:00 UTC (Dokploy's clock). The last 30 kept: a month.
+      schedule = coalesce(try(c.backups.schedule, null), "0 0 * * *")
       keep     = coalesce(try(c.backups.keep, null), 30)
     } if e == "production"
   }

@@ -177,7 +177,7 @@ def _value_message(error, parent) -> str:
     if error.validator == "pattern" and "\\r\\n" in error.validator_value:
         return "must be a string without a newline"
     if error.validator == "pattern" and parent[-2:] == ["backups", "schedule"]:
-        return f'must be a cron schedule: five fields of numbers, * , / and -, such as "0 0 */5 * *", got {error.instance!r}'
+        return f'must be a cron schedule: five fields of numbers, * , / and -, such as "0 2 * * *", got {error.instance!r}'
     if error.validator == "not" and parent[-1:] == ["custom_cert_resolver"]:
         return "only allowed with certificate_type custom"
     if error.validator == "uniqueItems":
@@ -581,7 +581,7 @@ def check(root: Path) -> list[Problem]:
     - A name listed twice in secrets, or twice in shared, is a Problem naming it.
     - databases sits under defaults only, with known engines (postgres, redis) whose setting is
       image, and for postgres also backups: schedule, five cron fields of numbers, * , / and - (the
-      message shows one), and keep, an integer of at least 1. databases under an environment says to
+      message shows one), and keep, an integer of at least 7. databases under an environment says to
       declare it under defaults.
     - In a project, the template and the guide reference: a name in defaults.secrets that an engine
       writes (DATABASE_KEYS) needs that engine under defaults.databases; an engine needs at least one

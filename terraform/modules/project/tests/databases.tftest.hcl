@@ -125,10 +125,10 @@ run "production_postgres_is_backed_up" {
       dokploy_backup.postgres["production"].service_type == "postgres" &&
       dokploy_backup.postgres["production"].database == "demo" &&
       dokploy_backup.postgres["production"].destination_id == "backups-id" &&
-      dokploy_backup.postgres["production"].cron_expression == "0 0 */5 * *" &&
+      dokploy_backup.postgres["production"].cron_expression == "0 0 * * *" &&
       dokploy_backup.postgres["production"].keep_latest_count == 30
     )
-    error_message = "Without backups, the backup should dump production's database to the destination every fifth day, keeping 30."
+    error_message = "Without backups, the backup should dump production's database to the destination every day, keeping 30."
   }
 }
 
@@ -172,7 +172,7 @@ run "backups_with_one_setting_keeps_the_other_default" {
 
   assert {
     condition = (
-      dokploy_backup.postgres["production"].cron_expression == "0 0 */5 * *" &&
+      dokploy_backup.postgres["production"].cron_expression == "0 0 * * *" &&
       dokploy_backup.postgres["production"].keep_latest_count == 7
     )
     error_message = "A setting left out of backups should keep its default."
@@ -230,7 +230,7 @@ run "malformed_schedule_is_rejected" {
   expect_failures = [var.config]
 }
 
-run "keep_below_one_is_rejected" {
+run "keep_below_seven_is_rejected" {
   command = plan
 
   variables {
@@ -238,7 +238,7 @@ run "keep_below_one_is_rejected" {
       repo = "example/demo"
       defaults = {
         secrets   = ["DATABASE_URL"]
-        databases = { postgres = { backups = { keep = 0 } } }
+        databases = { postgres = { backups = { keep = 6 } } }
       }
       environments = { staging = {}, production = {} }
     }

@@ -147,13 +147,12 @@ in `env` or `shared`.
 Removing an engine, or the project, fails the plan instead of deleting the data. Deleting a database
 is a deliberate change of its own, reviewed by Platform.
 
-Production's Postgres is backed up to GleSYS object storage with nothing to add here: every fifth day
-at 00:00 UTC (`0 0 */5 * *`: the 1st, 6th, 11th, 16th, 21st, 26th and 31st of each month), keeping
-the last 30 dumps. `backups` under `postgres` changes that for the project:
-`schedule` is five cron fields (minute, hour, day of month, month, day of week) in UTC, quoted, and
-`keep` is how many dumps to keep. Either can be left out and keeps its default; backups can't be
-turned off. Staging and Redis aren't backed up. Restoring one is in infrastructure's
-[database backups guide](https://github.com/kthaisociety/infrastructure/blob/main/docs/database-backups.md).
+Production's Postgres is backed up to GleSYS object storage with nothing to add here: every day at
+00:00 UTC (`0 0 * * *`), keeping the last 30 dumps. `backups` under `postgres` changes that for the
+project: `schedule` is five cron fields (minute, hour, day of month, month, day of week) in UTC,
+quoted, and `keep` is how many dumps to keep, at least 7. Either can be left out and keeps its
+default; backups can't be turned off. Staging and Redis aren't backed up. Restoring one is in
+infrastructure's [database backups guide](https://github.com/kthaisociety/infrastructure/blob/main/docs/database-backups.md).
 
 ```yaml excerpt
   databases:

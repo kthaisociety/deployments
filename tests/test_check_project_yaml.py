@@ -504,7 +504,7 @@ def test_empty_database_image_fails(repo):
 
 def test_postgres_backups_pass(repo):
     """backups under postgres, with a schedule and keep, passes; so does either alone, or neither."""
-    for backups in ('{schedule: "0 0 */5 * *", keep: 12}', '{schedule: "30 2 * * 1-5"}', "{keep: 7}", "{}"):
+    for backups in ('{schedule: "0 0 * * *", keep: 12}', '{schedule: "30 2 * * 1-5"}', "{keep: 7}", "{}"):
         write(repo, PROJECT, with_databases("[DATABASE_URL]", f"{{postgres: {{backups: {backups}}}}}"))
         assert check(repo) == [], backups
 
@@ -514,14 +514,14 @@ def test_malformed_backup_schedule_says_cron(repo):
     for schedule in ('"daily"', '"0 3 * *"', '"0 3 * * * *"', '"@daily"'):
         write(repo, PROJECT, with_databases("[DATABASE_URL]", f"{{postgres: {{backups: {{schedule: {schedule}}}}}}}"))
         message = message_at(check(repo), ".defaults.databases.postgres.backups.schedule")
-        assert "cron" in message and '"0 0 */5 * *"' in message, schedule
+        assert "cron" in message and '"0 2 * * *"' in message, schedule
 
 
-def test_backup_keep_below_one_fails(repo):
-    """keep is at least 1, and a whole number."""
-    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {backups: {keep: 0}}}"))
-    assert "at least 1" in message_at(check(repo), ".defaults.databases.postgres.backups.keep")
-    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {backups: {keep: 1.5}}}"))
+def test_backup_keep_below_seven_fails(repo):
+    """keep is at least 7, and a whole number."""
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {backups: {keep: 6}}}"))
+    assert "at least 7" in message_at(check(repo), ".defaults.databases.postgres.backups.keep")
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {backups: {keep: 7.5}}}"))
     assert "integer" in message_at(check(repo), ".defaults.databases.postgres.backups.keep")
 
 

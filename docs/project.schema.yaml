@@ -71,8 +71,8 @@ $defs:
         minLength: 1
 
   # An engine whose production database is backed up: postgres, and mongo once modules/project has it.
-  # Backed up whether backups is there or not: it only changes the schedule (default 0 0 */5 * *, UTC) and
-  # how many dumps are kept (default 30). terraform/modules/project/databases.tf.
+  # Backed up whether backups is there or not: it only changes the schedule (default 0 0 * * *, UTC) and
+  # how many dumps are kept (default 30, at least 7). terraform/modules/project/databases.tf.
   backedUpDatabase:
     type: object
     additionalProperties: false
@@ -88,9 +88,10 @@ $defs:
           schedule:
             type: string
             pattern: "^[0-9*,/-]+( [0-9*,/-]+){4}$"
+          # At least 7: with a frequent schedule, fewer can replace the last good dump within hours.
           keep:
             type: integer
-            minimum: 1
+            minimum: 7
 
   environment:
     type: object

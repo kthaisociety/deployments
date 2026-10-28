@@ -65,14 +65,15 @@ variable "config" {
       for s in [try(var.config.defaults.databases.postgres.backups.schedule, null)] :
       s == null || can(regex("^[0-9*,/-]+( [0-9*,/-]+){4}$", s))
     ])
-    error_message = "databases.postgres.backups.schedule in project.yaml must be a cron schedule: five fields of numbers, * , / and -, such as \"0 0 */5 * *\"."
+    error_message = "databases.postgres.backups.schedule in project.yaml must be a cron schedule: five fields of numbers, * , / and -, such as \"0 2 * * *\"."
   }
+  # At least 7: with a frequent schedule, fewer can replace the last good dump within hours.
   validation {
     condition = alltrue([
       for n in [try(var.config.defaults.databases.postgres.backups.keep, null)] :
-      n == null || try(n >= 1 && floor(n) == n, false)
+      n == null || try(n >= 7 && floor(n) == n, false)
     ])
-    error_message = "databases.postgres.backups.keep in project.yaml must be a whole number of at least 1: how many dumps to keep."
+    error_message = "databases.postgres.backups.keep in project.yaml must be a whole number of at least 7: how many dumps to keep."
   }
   # The app gets a database setting only by listing it in secrets. A name an engine writes must not
   # quietly read secret/<project>/<env> because its engine is missing, and an engine nobody reads is a
