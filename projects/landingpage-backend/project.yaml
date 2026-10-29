@@ -1,7 +1,8 @@
-# landingpage-backend: the Go API behind kthais.com. The browser calls it on its own host (production keeps
-# api.kthais.com; staging is landingpage-backend-staging.kthais.com). The frontend's middleware reads the jwt
-# cookie it sets, so both share COOKIE_DOMAIN, and JWT_COOKIE_NAME differs per environment to keep staging
-# and production sessions apart.
+# landingpage-backend: the Go API behind kthais.com. It is served on the website's own host under /api/v1
+# (production kthais.com/api/v1; staging landingpage-staging.kthais.com/api/v1), so its login cookie is
+# host-only: with SECURE_COOKIE and no COOKIE_DOMAIN it is __Host-jwt, which the browser never sends to
+# another host. Staging and production can't see each other's sessions, and the frontend's middleware on
+# the same host reads it.
 # Runs a daily background scheduler (Team Questions): it must never run next to the old UI-managed app
 # against the same data (app-migration.md §1.3, §6.5).
 # Production's domain is added in its own PR at the switchover (app-migration.md §7.4).
@@ -14,18 +15,18 @@ defaults:
     SERVER_PORT: "8080"
     DEVELOPMENT_MODE: "false"
     SECURE_COOKIE: "true"
-    COOKIE_DOMAIN: .kthais.com
     TRUSTED_PROXY_HOST: dokploy-traefik
     OAUTH_RATE_LIMIT_REQUESTS: "5"
     SES_REGION: eu-north-1
     SES_SENDER: applications@kthais.com
     SES_REPLY_TO: contact@kthais.com
-    MAILCHIMP_USER: kthais
     # DATABASE_URL has no sslmode; the backend adds this one. Dokploy's Postgres has no TLS.
     DB_SSLMODE: disable
 
   # Names only. Values in OpenBao at secret/landingpage-backend/<environment>; DATABASE_URL and REDIS_* are
-  # written by the pipeline under .../database/.
+  # written by the pipeline under .../database/. Mailchimp and MCP_SERVICE_SECRET are left out on purpose:
+  # neither is used in production, Mailchimp turns itself off without its key, and without the secret the
+  # backend rejects every /auth/mcp-exchange call.
   secrets:
     - DATABASE_URL
     - REDIS_HOST
@@ -37,11 +38,8 @@ defaults:
     - JWT_PRIVATE_KEY
     - AWS_ACCESS_KEY_ID
     - AWS_SECRET_ACCESS_KEY
-    - MAILCHIMP_API_KEY
-    - MAILCHIMP_LIST_ID
     - LUMA_API_KEY
     - LUMA_MEMBERS_TIER_ID
-    - MCP_SERVICE_SECRET
     # Cloudflare R2 until object storage moves to GleSYS (IT-39).
     - R2_Access_Key_Id
     - R2_Secret_Access_Key
@@ -60,22 +58,26 @@ defaults:
     redis: {}
 
 environments:
-  # Staging secrets are new and inert: a staging OAuth client, its own JWT pair and session/MCP keys,
-  # dummy SES/Mailchimp/Luma keys.
+  # Staging secrets are new and inert: a staging OAuth client, its own JWT pair and session key, dummy
+  # SES/Luma keys.
+  # BACKEND_URL is the site's host: the OAuth redirect URI is BACKEND_URL/api/v1/auth/google/callback.
+  # ALLOWED_ORIGINS starts with that host, because a same-origin request carries no Origin header and the
+  # OAuth start then falls back to the first entry.
+  # The domain has a path and no strip_path: the backend's routes start with /api/v1, and the frontend
+  # keeps every other path on the same host.
   staging:
     env:
-      BACKEND_URL: https://landingpage-backend-staging.kthais.com
-      FRONTEND_URL: https://landingpage-frontend-staging.kthais.com
-      ALLOWED_ORIGINS: https://landingpage-frontend-staging.kthais.com,https://landingpage-backend-staging.kthais.com
-      JWT_COOKIE_NAME: jwt_staging
+      BACKEND_URL: https://landingpage-staging.kthais.com
+      FRONTEND_URL: https://landingpage-staging.kthais.com
+      ALLOWED_ORIGINS: https://landingpage-staging.kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-staging-fm3uek:8000
     domains:
-      landingpage-backend-staging.kthais.com: {port: 8080}
+      landingpage-staging.kthais.com: {port: 8080, path: /api/v1}
 
+  # The switchover adds kthais.com: {port: 8080, path: /api/v1}; api.kthais.com is dropped then.
   production:
     env:
-      BACKEND_URL: https://api.kthais.com
+      BACKEND_URL: https://kthais.com
       FRONTEND_URL: https://kthais.com
-      ALLOWED_ORIGINS: https://kthais.com,https://api.kthais.com
-      JWT_COOKIE_NAME: jwt
+      ALLOWED_ORIGINS: https://kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000
