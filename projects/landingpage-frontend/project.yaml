@@ -1,6 +1,7 @@
 # landingpage-frontend: the Next.js site, kthais.com. BACKEND_URL is read at runtime (served to the browser
-# as /runtime-env.js), so one image runs in both environments. Its middleware verifies landingpage-backend's
-# jwt cookie, named JWT_COOKIE_NAME, with the shared JWT_PUBLIC_KEY.
+# as /runtime-env.js), so one image runs in both environments. landingpage-backend is served on this same
+# host under /api/v1, so BACKEND_URL is the site's own host. Its middleware verifies the backend's
+# host-only __Host-jwt cookie with the shared JWT_PUBLIC_KEY.
 # Production's domain is added in its own PR at the switchover (app-migration.md §7.4).
 repo: kthaisociety/landingpage-frontend
 
@@ -22,14 +23,12 @@ defaults:
 environments:
   staging:
     env:
-      BACKEND_URL: https://landingpage-backend-staging.kthais.com
-      JWT_COOKIE_NAME: jwt_staging
+      BACKEND_URL: https://landingpage-staging.kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-staging-fm3uek:8000
     domains:
-      landingpage-frontend-staging.kthais.com: {port: 3000}
+      landingpage-staging.kthais.com: {port: 3000}
 
   production:
     env:
-      BACKEND_URL: https://api.kthais.com
-      JWT_COOKIE_NAME: jwt
+      BACKEND_URL: https://kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000
