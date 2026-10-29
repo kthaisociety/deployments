@@ -108,6 +108,15 @@ variable "config" {
     ]))
     error_message = "env or shared in project.yaml sets a name an enabled database writes. List it in defaults.secrets instead: the app gets it from the database's secret in OpenBao."
   }
+  # Likewise the storage names (storage.tf): they only ever come from the storage secret.
+  validation {
+    condition = alltrue(flatten([
+      for c in concat([try(var.config.defaults, {})], values(var.config.environments)) : [
+        for k in local.storage_keys : !contains(keys(try(c.env, {})), k) && !contains(try(c.shared, []), k)
+      ]
+    ]))
+    error_message = "env or shared in project.yaml sets an object storage name (${join(", ", local.storage_keys)}). List it in defaults.secrets instead: the app gets it from secret/<project>/<env>/storage, which infrastructure writes for a project with storage."
+  }
 }
 
 variable "release" {
