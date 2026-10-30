@@ -306,8 +306,7 @@ def _check_project(file, text, validator) -> tuple[list[Problem], object]:
     problems = _key_problems(file, doc)
     if problems:
         return problems, None
-    problems = _schema_problems(file, doc, validator) + _collision_problems(file, doc) + _database_problems(file, doc)
-    return problems + _storage_problems(file, doc), doc
+    return _schema_problems(file, doc, validator) + _collision_problems(file, doc) + _database_problems(file, doc) + _storage_problems(file, doc), doc
 
 
 def _as_map(value) -> dict:
@@ -416,8 +415,7 @@ def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]
     problems = _key_problems(GUIDE, doc, ref_line)
     if problems:
         return problems
-    problems = _schema_problems(GUIDE, doc, validator, ref_line) + _database_problems(GUIDE, doc, ref_line)
-    problems += _storage_problems(GUIDE, doc, ref_line)
+    problems = _schema_problems(GUIDE, doc, validator, ref_line) + _database_problems(GUIDE, doc, ref_line) + _storage_problems(GUIDE, doc, ref_line)
     if doc is None:
         return problems
     for steps, message in _missing_reference_keys(doc, schema, schema):
