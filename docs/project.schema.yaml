@@ -38,7 +38,7 @@ properties:
         additionalProperties: false
         properties:
           postgres:
-            $ref: "#/$defs/database"
+            $ref: "#/$defs/backedUpDatabase"
           redis:
             $ref: "#/$defs/database"
       volumes:
@@ -69,6 +69,29 @@ $defs:
       image:
         type: string
         minLength: 1
+
+  # An engine whose production database is backed up: postgres, and mongo once modules/project has it.
+  # Backed up whether backups is there or not: it only changes the schedule (default 0 0 * * *, UTC) and
+  # how many dumps are kept (default 30, at least 7). terraform/modules/project/databases.tf.
+  backedUpDatabase:
+    type: object
+    additionalProperties: false
+    properties:
+      image:
+        type: string
+        minLength: 1
+      backups:
+        type: object
+        additionalProperties: false
+        properties:
+          # Five cron fields, numbers only: minute hour day-of-month month day-of-week.
+          schedule:
+            type: string
+            pattern: "^[0-9*,/-]+( [0-9*,/-]+){4}$"
+          # At least 7: with a frequent schedule, fewer can replace the last good dump within hours.
+          keep:
+            type: integer
+            minimum: 7
 
   environment:
     type: object

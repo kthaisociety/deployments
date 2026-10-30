@@ -45,7 +45,11 @@ defaults:
   databases:
     postgres:
       image: postgres:16-alpine
-    redis: {}
+      backups:
+        schedule: "0 2 * * *"
+        keep: 7
+    redis:
+      image: redis:7-alpine
   volumes:
     /data: data
 environments:
@@ -498,6 +502,42 @@ def test_empty_database_image_fails(repo):
     assert "empty" in message_at(check(repo), ".defaults.databases.postgres.image")
 
 
+def test_postgres_backups_pass(repo):
+    """backups under postgres, with a schedule and keep, passes; so does either alone, or neither."""
+    for backups in ('{schedule: "0 0 * * *", keep: 12}', '{schedule: "30 2 * * 1-5"}', "{keep: 7}", "{}"):
+        write(repo, PROJECT, with_databases("[DATABASE_URL]", f"{{postgres: {{backups: {backups}}}}}"))
+        assert check(repo) == [], backups
+
+
+def test_malformed_backup_schedule_says_cron(repo):
+    """A schedule that isn't five cron fields says so, with an example."""
+    for schedule in ('"daily"', '"0 3 * *"', '"0 3 * * * *"', '"@daily"'):
+        write(repo, PROJECT, with_databases("[DATABASE_URL]", f"{{postgres: {{backups: {{schedule: {schedule}}}}}}}"))
+        message = message_at(check(repo), ".defaults.databases.postgres.backups.schedule")
+        assert "cron" in message and '"0 2 * * *"' in message, schedule
+
+
+def test_backup_keep_below_seven_fails(repo):
+    """keep is at least 7, and a whole number."""
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {backups: {keep: 6}}}"))
+    assert "at least 7" in message_at(check(repo), ".defaults.databases.postgres.backups.keep")
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {backups: {keep: 7.5}}}"))
+    assert "integer" in message_at(check(repo), ".defaults.databases.postgres.backups.keep")
+
+
+def test_unknown_backup_setting_lists_schedule_and_keep(repo):
+    """A backups setting other than schedule and keep, such as turning it off, lists the two."""
+    write(repo, PROJECT, with_databases("[DATABASE_URL]", "{postgres: {backups: {enabled: false}}}"))
+    message = message_at(check(repo), ".defaults.databases.postgres.backups.enabled")
+    assert "schedule" in message and "keep" in message
+
+
+def test_backups_under_redis_fails(repo):
+    """Redis isn't backed up, so backups under redis is an unknown key that lists image."""
+    write(repo, PROJECT, with_databases("[REDIS_URL]", "{redis: {backups: {keep: 7}}}"))
+    assert "image" in message_at(check(repo), ".defaults.databases.redis.backups")
+
+
 def test_missing_databases_is_named(repo):
     """defaults without databases names it."""
     write(repo, PROJECT, MINIMAL.replace("  databases: {}\n", ""))
@@ -577,7 +617,7 @@ def test_guide_reference_database_rules_apply_at_guide_line(repo):
     """The guide reference gets the database rules, at the line in the markdown."""
     write(repo, GUIDE, guide(("yaml", FULL.replace("    - REDIS_URL\n", ""))))
     problems = [p for p in check(repo) if p.file == GUIDE]
-    assert [(p.path, p.line) for p in problems] == [(".defaults.databases.redis", 17)]
+    assert [(p.path, p.line) for p in problems] == [(".defaults.databases.redis", 20)]
 
 
 # Files and reporting

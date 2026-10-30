@@ -45,10 +45,35 @@ variable "config" {
     condition = alltrue(flatten([
       for engine, s in try(var.config.defaults.databases, {}) : [
         can(keys(s)) || s == null ? true : false,
-        [for k in try(keys(s), []) : contains(["image"], k)],
+        [for k in try(keys(s), []) : contains(engine == "postgres" ? ["image", "backups"] : ["image"], k)],
       ]
     ]))
-    error_message = "A database in project.yaml has an unknown setting, or isn't a map. Allowed: image. Write {} for none."
+    error_message = "A database in project.yaml has an unknown setting, or isn't a map. Allowed: image, and backups for postgres. Write {} for none."
+  }
+  # Production's Postgres is always backed up (databases.tf): backups only changes when, and how many
+  # dumps are kept.
+  validation {
+    condition = alltrue([
+      for b in [try(var.config.defaults.databases.postgres.backups, null)] : b == null || (
+        can(keys(b)) && alltrue([for k in try(keys(b), []) : contains(["schedule", "keep"], k)])
+      )
+    ])
+    error_message = "databases.postgres.backups in project.yaml has an unknown setting, or isn't a map. Allowed: schedule, keep."
+  }
+  validation {
+    condition = alltrue([
+      for s in [try(var.config.defaults.databases.postgres.backups.schedule, null)] :
+      s == null || can(regex("^[0-9*,/-]+( [0-9*,/-]+){4}$", s))
+    ])
+    error_message = "databases.postgres.backups.schedule in project.yaml must be a cron schedule: five fields of numbers, * , / and -, such as \"0 2 * * *\"."
+  }
+  # At least 7: with a frequent schedule, fewer can replace the last good dump within hours.
+  validation {
+    condition = alltrue([
+      for n in [try(var.config.defaults.databases.postgres.backups.keep, null)] :
+      n == null || try(n >= 7 && floor(n) == n, false)
+    ])
+    error_message = "databases.postgres.backups.keep in project.yaml must be a whole number of at least 7: how many dumps to keep."
   }
   # The app gets a database setting only by listing it in secrets. A name an engine writes must not
   # quietly read secret/<project>/<env> because its engine is missing, and an engine nobody reads is a

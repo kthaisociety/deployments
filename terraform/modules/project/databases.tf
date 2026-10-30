@@ -20,6 +20,11 @@
 #
 # prevent_destroy: removing an engine (or the project) fails the plan instead of deleting the data and
 # its credentials. Deleting them is a deliberate `removed` block, reviewed on its own.
+#
+# Backups: production's Postgres is dumped to GleSYS object storage, through the Dokploy destination
+# kthaisociety/infrastructure keeps (its docs/database-backups.md, restoring included): every day unless
+# databases.postgres.backups sets its own schedule and how many dumps to keep. Staging isn't backed up,
+# nor is Redis.
 
 locals {
   databases = try(local.defaults.databases, {})
@@ -141,6 +146,38 @@ resource "vault_kv_secret_v2" "postgres" {
   lifecycle {
     prevent_destroy = true
   }
+}
+
+# Postgres backups
+
+locals {
+  # Production's, always: backups (schedule, keep) can change when and how many, not whether.
+  postgres_backups = {
+    for e, c in local.postgres : e => {
+      # Every day at 00:00 UTC (Dokploy's clock). The last 30 kept: a month.
+      schedule = coalesce(try(c.backups.schedule, null), "0 0 * * *")
+      keep     = coalesce(try(c.backups.keep, null), 30)
+    } if e == "production"
+  }
+}
+
+# kthaisociety/infrastructure's terraform/dokploy (core.tf) makes it, by this name. Looked up only by a
+# project that needs it.
+data "dokploy_destination" "database_backups" {
+  count = length(local.postgres_backups) > 0 ? 1 : 0
+  name  = "database-backups"
+}
+
+resource "dokploy_backup" "postgres" {
+  for_each       = local.postgres_backups
+  service_id     = dokploy_postgres.this[each.key].id
+  service_type   = "postgres"
+  database       = dokploy_postgres.this[each.key].database_name
+  destination_id = data.dokploy_destination.database_backups[0].id
+  # Dokploy keys each dump <app_name>/<prefix>/<timestamp>.sql.gz itself: "/" adds no folder.
+  prefix            = "/"
+  cron_expression   = each.value.schedule
+  keep_latest_count = each.value.keep
 }
 
 # Redis: the same three steps.
