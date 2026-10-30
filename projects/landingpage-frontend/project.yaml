@@ -1,0 +1,34 @@
+# landingpage-frontend: the Next.js site, kthais.com. BACKEND_URL is read at runtime (served to the browser
+# as /runtime-env.js), so one image runs in both environments. landingpage-backend is served on this same
+# host under /api/v1, so BACKEND_URL is the site's own host. Its middleware verifies the backend's
+# host-only __Host-jwt cookie with the shared JWT_PUBLIC_KEY.
+# Production's domain is added in its own PR at the switchover (app-migration.md §7.4).
+repo: kthaisociety/landingpage-frontend
+
+# For every environment unless it says otherwise. NODE_ENV, PORT and HOSTNAME come from the Dockerfile.
+defaults:
+  env: {}
+
+  # Names only. Values in OpenBao at secret/landingpage-frontend/<environment>.
+  secrets:
+    - LUMA_API_KEY
+
+  # Values in OpenBao at secret/shared/<environment>, which every project can read.
+  # JWT_PUBLIC_KEY: the public half of landingpage-backend's JWT_PRIVATE_KEY.
+  shared:
+    - JWT_PUBLIC_KEY
+
+  databases: {}
+
+environments:
+  staging:
+    env:
+      BACKEND_URL: https://landingpage-staging.kthais.com
+      ONBOARDING_SERVICE_URL: http://onboarding-service-staging-fm3uek:8000
+    domains:
+      landingpage-staging.kthais.com: {port: 3000}
+
+  production:
+    env:
+      BACKEND_URL: https://kthais.com
+      ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000
