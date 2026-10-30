@@ -38,6 +38,8 @@ KEY_ENGINE = {key: engine for engine, keys in DATABASE_KEYS.items() for key in k
 # The settings of a project's object storage, as in terraform/modules/project/storage.tf. infrastructure
 # writes them for a project with storage; an app reads one by listing its name in secrets.
 STORAGE_KEYS = ("S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_ENDPOINT", "S3_REGION", "S3_BUCKET")
+# And one per bucket of a buckets list, S3_BUCKET_<NAME>, as storage.tf's storage_bucket_pattern.
+STORAGE_BUCKET_PATTERN = r"^S3_BUCKET_[A-Z0-9]+(_[A-Z0-9]+)*$"
 MUST_SHOW_ENTRY = ("env", "secrets", "shared", "volumes")
 REFERENCE_FENCE = "yaml"
 EXCERPT_FENCE = "yaml excerpt"
@@ -468,8 +470,13 @@ def _storage_problems(file, doc, offset=0) -> list[Problem]:
             f"{name} is an object storage setting infrastructure writes to OpenBao. List it in defaults.secrets instead",
         )
         for steps, name in places
-        if name in STORAGE_KEYS and name not in secrets
+        if _is_storage_name(name) and name not in secrets
     ]
+
+
+def _is_storage_name(name) -> bool:
+    """Whether name is one of the object storage settings: STORAGE_KEYS, or a bucket's S3_BUCKET_<NAME>."""
+    return isinstance(name, str) and (name in STORAGE_KEYS or re.fullmatch(STORAGE_BUCKET_PATTERN, name) is not None)
 
 
 def _database_problems(file, doc, offset=0) -> list[Problem]:
@@ -616,8 +623,8 @@ def check(root: Path) -> list[Problem]:
     - In a project, the template and the guide reference: a name in defaults.secrets that an engine
       writes (DATABASE_KEYS) needs that engine under defaults.databases; an engine needs at least one
       of its names in defaults.secrets; and an enabled engine's name in env or shared, but not in
-      secrets, says to list it in secrets. So does an object storage name (STORAGE_KEYS) in env or
-      shared, with or without storage. Each is a Problem at the offending entry.
+      secrets, says to list it in secrets. So does an object storage name (STORAGE_KEYS, or
+      S3_BUCKET_<NAME>) in env or shared, with or without storage. Each is a Problem at the offending entry.
     - A domain needs port, an integer from 1 to 65535. certificate_type is letsencrypt, none or
       custom (the message lists them). custom_cert_resolver is required with certificate_type
       custom and rejected otherwise. https: false allows only certificate_type none. path and

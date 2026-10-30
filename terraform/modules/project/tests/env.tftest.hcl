@@ -66,6 +66,33 @@ run "storage_names_read_the_storage_secret" {
   }
 }
 
+run "bucket_names_read_the_storage_secret" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        env = {}
+        # The last two aren't S3_BUCKET_<NAME>: they read the app's own path.
+        secrets = ["S3_BUCKET_UPLOADS", "S3_BUCKET_USER_FILES", "S3_BUCKET_", "S3_BUCKETS"]
+        shared  = []
+      }
+      environments = { staging = {} }
+    }
+  }
+
+  assert {
+    condition = dokploy_application.this["staging"].env == join("\n", [
+      "S3_BUCKET_UPLOADS=$${{vault.demo-staging.demo/staging/storage:S3_BUCKET_UPLOADS}}",
+      "S3_BUCKET_USER_FILES=$${{vault.demo-staging.demo/staging/storage:S3_BUCKET_USER_FILES}}",
+      "S3_BUCKET_=$${{vault.demo-staging.demo/staging:S3_BUCKET_}}",
+      "S3_BUCKETS=$${{vault.demo-staging.demo/staging:S3_BUCKETS}}",
+    ])
+    error_message = "S3_BUCKET_<NAME> should read secret/<project>/<env>/storage, like S3_BUCKET."
+  }
+}
+
 run "storage_name_in_env_is_rejected" {
   command = plan
 
@@ -88,6 +115,20 @@ run "storage_name_in_an_environments_env_is_rejected" {
       repo         = "example/demo"
       defaults     = {}
       environments = { staging = { env = { S3_ENDPOINT = "https://elsewhere" } } }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "bucket_name_in_env_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo         = "example/demo"
+      defaults     = { env = { S3_BUCKET_UPLOADS = "my-bucket" } }
+      environments = { staging = {} }
     }
   }
 

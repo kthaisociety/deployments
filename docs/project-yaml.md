@@ -168,12 +168,16 @@ infrastructure's [database backups guide](https://github.com/kthaisociety/infras
 
 ## Object storage
 
-Object storage isn't set in `project.yaml`. A project asks for it with `storage: true` on its line in
+Object storage isn't set in `project.yaml`. A project asks for it with `storage` on its line in
 `kthaisociety/infrastructure`'s `terraform/openbao/projects.yaml`, which gives each environment its own
-GleSYS instance and bucket, `kthais-<project>-<environment>`. Staging's credentials can't reach
-production's bucket. Infrastructure writes everything the app needs to OpenBao at
-`secret/<project>/<environment>/storage`; nobody types it. As with databases, the app gets a setting
-only by listing its name in `secrets`:
+GleSYS instance and buckets. Staging's credentials can't reach production's buckets.
+
+- `storage: {}`: one bucket, `kthais-<project>-<environment>`.
+- `storage: { buckets: [uploads, user-files] }`: one bucket per name,
+  `kthais-<project>-<environment>-uploads` and so on.
+
+Infrastructure writes everything the app needs to OpenBao at `secret/<project>/<environment>/storage`;
+nobody types it. As with databases, the app gets a setting only by listing its name in `secrets`:
 
 | Name | Value |
 |---|---|
@@ -181,11 +185,13 @@ only by listing its name in `secrets`:
 | `S3_SECRET_ACCESS_KEY` | the secret key |
 | `S3_ENDPOINT` | `https://objects.dc-sto1.glesys.net` |
 | `S3_REGION` | `us-east-1`: GleSYS ignores it, but S3 clients sign requests with a region |
-| `S3_BUCKET` | the bucket's name |
+| `S3_BUCKET` | the bucket's name, with `storage: {}` |
+| `S3_BUCKET_<NAME>` | with a `buckets` list, each bucket's name: `user-files` is `S3_BUCKET_USER_FILES` |
 
-The app passes them to its S3 client: these aren't the names AWS SDKs read by themselves. The bucket
-already exists. These names always read the storage secret, so a project without storage in
-infrastructure fails its deploy on them. The check fails on one of them in `env` or `shared`.
+The app passes them to its S3 client: these aren't the names AWS SDKs read by themselves. The buckets
+already exist. These names always read the storage secret, and CI checks them against infrastructure's
+`projects.yaml`: a project without storage there, or a bucket name it doesn't have, fails the check. The
+check also fails on one of them in `env` or `shared`.
 
 ## Volumes
 
