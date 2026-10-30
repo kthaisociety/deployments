@@ -103,7 +103,8 @@ their values. Environment values override defaults with the same name. A name be
 
 `secrets` lists secret names required by the project. Put the names here once; values for each
 environment live in OpenBao, at `secret/<project>/<environment>`. A name that one of the project's
-[databases](#databases) writes, such as `DATABASE_URL`, reads that database's credentials instead.
+[databases](#databases) writes, such as `DATABASE_URL`, reads that database's credentials instead, and
+an [object storage](#object-storage) name, such as `S3_BUCKET`, reads the project's storage.
 
 ```yaml excerpt
   secrets:
@@ -164,6 +165,33 @@ infrastructure's [database backups guide](https://github.com/kthaisociety/infras
     redis:
       image: redis:7-alpine
 ```
+
+## Object storage
+
+Object storage isn't set in `project.yaml`. A project asks for it with `storage` on its line in
+`kthaisociety/infrastructure`'s `terraform/openbao/projects.yaml`, which gives each environment its own
+GleSYS instance and buckets. Staging's credentials can't reach production's buckets.
+
+- `storage: {}`: one bucket, `kthais-<project>-<environment>`.
+- `storage: { buckets: [uploads, user-files] }`: one bucket per name,
+  `kthais-<project>-<environment>-uploads` and so on.
+
+Infrastructure writes everything the app needs to OpenBao at `secret/<project>/<environment>/storage`;
+nobody types it. As with databases, the app gets a setting only by listing its name in `secrets`:
+
+| Name | Value |
+|---|---|
+| `S3_ACCESS_KEY_ID` | the access key |
+| `S3_SECRET_ACCESS_KEY` | the secret key |
+| `S3_ENDPOINT` | `https://objects.dc-sto1.glesys.net` |
+| `S3_REGION` | `us-east-1`: GleSYS ignores it, but S3 clients sign requests with a region |
+| `S3_BUCKET` | the bucket's name, with `storage: {}` |
+| `S3_BUCKET_<NAME>` | with a `buckets` list, each bucket's name: `user-files` is `S3_BUCKET_USER_FILES` |
+
+The app passes them to its S3 client: these aren't the names AWS SDKs read by themselves. The buckets
+already exist. These names always read the storage secret, and CI checks them against infrastructure's
+`projects.yaml`: a project without storage there, or a bucket name it doesn't have, fails the check. The
+check also fails on one of them in `env` or `shared`.
 
 ## Volumes
 

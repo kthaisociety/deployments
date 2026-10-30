@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from check_project_yaml import DATABASE_KEYS, check
+from check_project_yaml import DATABASE_KEYS, STORAGE_BUCKET_PATTERN, STORAGE_KEYS, check
 
 REPO = Path(__file__).resolve().parent.parent
 COMMAND = REPO / "scripts" / "check-project-yaml"
@@ -607,6 +607,46 @@ def test_database_name_in_secrets_and_env_is_one_collision(repo):
     assert len(problems) == 1
 
 
+def test_storage_names_in_secrets_pass(repo):
+    """The storage names in secrets are like any other secret to the check: infrastructure has the rest."""
+    write(repo, PROJECT, MINIMAL.replace("  secrets: []", "  secrets: [S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_ENDPOINT, S3_REGION, S3_BUCKET]"))
+    assert check(repo) == []
+
+
+def test_bucket_names_in_secrets_pass(repo):
+    """A buckets list's S3_BUCKET_<NAME> names in secrets pass too."""
+    write(repo, PROJECT, MINIMAL.replace("  secrets: []", "  secrets: [S3_BUCKET_UPLOADS, S3_BUCKET_USER_FILES]"))
+    assert check(repo) == []
+
+
+@pytest.mark.parametrize(
+    "text, path",
+    [
+        (MINIMAL.replace("  env: {}", "  env:\n    S3_BUCKET: x"), ".defaults.env.S3_BUCKET"),
+        (MINIMAL.replace("  shared: []", "  shared: [S3_ACCESS_KEY_ID]"), ".defaults.shared[0]"),
+        (MINIMAL.replace("  env: {}", "  env:\n    S3_BUCKET_UPLOADS: x"), ".defaults.env.S3_BUCKET_UPLOADS"),
+        (MINIMAL.replace("  shared: []", "  shared: [S3_BUCKET_USER_FILES]"), ".defaults.shared[0]"),
+        (
+            MINIMAL.replace("  staging: {}", "  staging:\n    env:\n      S3_ENDPOINT: x"),
+            ".environments.staging.env.S3_ENDPOINT",
+        ),
+    ],
+    ids=["defaults-env", "shared", "bucket-env", "bucket-shared", "environment-env"],
+)
+def test_storage_name_outside_secrets_says_list_it(repo, text, path):
+    """A storage name in env or shared says to list it in secrets, storage or not."""
+    write(repo, PROJECT, text)
+    assert "defaults.secrets" in message_at(check(repo), path)
+
+
+def test_storage_name_in_secrets_and_env_is_one_collision(repo):
+    """A storage name in secrets and env is the collision rule's problem alone."""
+    write(repo, PROJECT, MINIMAL.replace("  secrets: []", "  secrets: [S3_BUCKET]").replace("  env: {}", "  env:\n    S3_BUCKET: x"))
+    problems = check(repo)
+    assert paths(problems) == {".defaults.env.S3_BUCKET"}
+    assert len(problems) == 1
+
+
 def test_template_database_rules_apply(repo):
     """The template gets the database rules too: every project copied from it would fail."""
     write(repo, TEMPLATE, with_databases("[TOKEN]", "{postgres: {}}"))
@@ -1036,6 +1076,19 @@ def test_schema_domain_settings_match_module(repo):
     write(repo, PROJECT, project_yaml(staging=staging_domain(["port: 3000", "bogus: 1"])))
     allowed = message_at(check(repo), f"{DOMAIN}.bogus").split("Allowed here: ")[1].split(", ")
     assert sorted(allowed) == sorted(module)
+
+
+def test_storage_keys_match_module():
+    """The storage names are exactly the ones terraform/modules/project/storage.tf reads."""
+    storage = (REPO / "terraform/modules/project/storage.tf").read_text()
+    module = tuple(re.findall(r'"([A-Z0-9_]+)"', re.search(r"storage_keys = \[([^\]]*)\]", storage).group(1)))
+    assert module == STORAGE_KEYS
+
+
+def test_storage_bucket_pattern_matches_module():
+    """S3_BUCKET_<NAME> is matched by the same pattern terraform/modules/project/storage.tf uses."""
+    storage = (REPO / "terraform/modules/project/storage.tf").read_text()
+    assert re.search(r'storage_bucket_pattern = "([^"]+)"', storage).group(1) == STORAGE_BUCKET_PATTERN
 
 
 def test_database_keys_match_module():
