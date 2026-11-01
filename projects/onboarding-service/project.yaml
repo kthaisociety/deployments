@@ -1,5 +1,5 @@
 # onboarding-service: creates and removes members' Google Workspace and Mattermost accounts. Internal only
-# (no domain): landingpage-backend and the frontend call it through ONBOARDING_SERVICE_URL.
+# (no domain): kthais-backend and the frontend call it through ONBOARDING_SERVICE_URL.
 # Migration from the UI-managed app: kthaisociety/infrastructure, docs/onboarding-service-migration.md.
 repo: kthaisociety/onboarding-service
 

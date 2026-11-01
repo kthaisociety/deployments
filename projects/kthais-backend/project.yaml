@@ -1,12 +1,12 @@
-# landingpage-backend: the Go API behind kthais.com. It is served on the website's own host under /api/v1
-# (production kthais.com/api/v1; staging landingpage-staging.kthais.com/api/v1), so its login cookie is
+# kthais-backend: the Go API behind kthais.com. It is served on the website's own host under /api/v1
+# (production kthais.com/api/v1; staging kthais-staging.kthais.com/api/v1), so its login cookie is
 # host-only: with SECURE_COOKIE and no COOKIE_DOMAIN it is __Host-jwt, which the browser never sends to
 # another host. Staging and production can't see each other's sessions, and the frontend's middleware on
 # the same host reads it.
 # Runs a daily background scheduler (Team Questions): it must never run next to the old UI-managed app
 # against the same data (app-migration.md §1.3, §6.5).
 # Production's domain is added in its own PR at the switchover (app-migration.md §7.4).
-repo: kthaisociety/landingpage-backend
+repo: kthaisociety/kthais-backend
 
 # For every environment unless it says otherwise.
 defaults:
@@ -23,7 +23,7 @@ defaults:
     # DATABASE_URL has no sslmode; the backend adds this one. Dokploy's Postgres has no TLS.
     DB_SSLMODE: disable
 
-  # Names only. Values in OpenBao at secret/landingpage-backend/<environment>; DATABASE_URL and REDIS_* are
+  # Names only. Values in OpenBao at secret/kthais-backend/<environment>; DATABASE_URL and REDIS_* are
   # written by the pipeline under .../database/. Mailchimp and MCP_SERVICE_SECRET are left out on purpose:
   # neither is used in production, Mailchimp turns itself off without its key, and without the secret the
   # backend rejects every /auth/mcp-exchange call.
@@ -47,7 +47,7 @@ defaults:
     - R2_Bucket
 
   # Values in OpenBao at secret/shared/<environment>, which every project can read.
-  # JWT_PUBLIC_KEY: also read by landingpage-frontend; pairs with JWT_PRIVATE_KEY above.
+  # JWT_PUBLIC_KEY: also read by kthais-frontend; pairs with JWT_PRIVATE_KEY above.
   # ONBOARDING_SERVICE_SECRET: also read by onboarding-service (both directions).
   shared:
     - JWT_PUBLIC_KEY
@@ -67,12 +67,12 @@ environments:
   # keeps every other path on the same host.
   staging:
     env:
-      BACKEND_URL: https://landingpage-staging.kthais.com
-      FRONTEND_URL: https://landingpage-staging.kthais.com
-      ALLOWED_ORIGINS: https://landingpage-staging.kthais.com
+      BACKEND_URL: https://kthais-staging.kthais.com
+      FRONTEND_URL: https://kthais-staging.kthais.com
+      ALLOWED_ORIGINS: https://kthais-staging.kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-staging-fm3uek:8000
     domains:
-      landingpage-staging.kthais.com: {port: 8080, path: /api/v1}
+      kthais-staging.kthais.com: {port: 8080, path: /api/v1}
 
   # The switchover adds kthais.com: {port: 8080, path: /api/v1}; api.kthais.com is dropped then.
   production:
