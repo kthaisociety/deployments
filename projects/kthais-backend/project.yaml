@@ -36,8 +36,8 @@ defaults:
     - GOOGLE_CLIENT_SECRET
     - SESSION_KEY
     - JWT_PRIVATE_KEY
-    - AWS_ACCESS_KEY_ID
-    - AWS_SECRET_ACCESS_KEY
+    # No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY yet: staging runs every commit on main and must not
+    # send real email. Secrets are per project, so the production switchover adds them back.
     - LUMA_API_KEY
     - LUMA_MEMBERS_TIER_ID
     # Cloudflare R2 until object storage moves to GleSYS (IT-39).
@@ -58,8 +58,8 @@ defaults:
     redis: {}
 
 environments:
-  # Staging secrets are new and inert: a staging OAuth client, its own JWT pair and session key, dummy
-  # SES/Luma keys.
+  # Staging secrets are new and inert: a staging OAuth client, its own JWT pair and session key, no SES
+  # keys (sending fails and is logged), a dummy Luma key.
   # BACKEND_URL is the site's host: the OAuth redirect URI is BACKEND_URL/api/v1/auth/google/callback.
   # ALLOWED_ORIGINS starts with that host, because a same-origin request carries no Origin header and the
   # OAuth start then falls back to the first entry.
