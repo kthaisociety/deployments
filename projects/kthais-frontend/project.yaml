@@ -23,10 +23,10 @@ defaults:
 environments:
   staging:
     env:
-      BACKEND_URL: https://kthais-staging.kthais.com
+      BACKEND_URL: https://staging.kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-staging-fm3uek:8000
     domains:
-      kthais-staging.kthais.com: {port: 3000}
+      staging.kthais.com: {port: 3000}
 
   production:
     env:

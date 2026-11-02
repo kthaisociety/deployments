@@ -1,5 +1,5 @@
 # kthais-backend: the Go API behind kthais.com. It is served on the website's own host under /api/v1
-# (production kthais.com/api/v1; staging kthais-staging.kthais.com/api/v1), so its login cookie is
+# (production kthais.com/api/v1; staging staging.kthais.com/api/v1), so its login cookie is
 # host-only: with SECURE_COOKIE and no COOKIE_DOMAIN it is __Host-jwt, which the browser never sends to
 # another host. Staging and production can't see each other's sessions, and the frontend's middleware on
 # the same host reads it.
@@ -67,12 +67,12 @@ environments:
   # keeps every other path on the same host.
   staging:
     env:
-      BACKEND_URL: https://kthais-staging.kthais.com
-      FRONTEND_URL: https://kthais-staging.kthais.com
-      ALLOWED_ORIGINS: https://kthais-staging.kthais.com
+      BACKEND_URL: https://staging.kthais.com
+      FRONTEND_URL: https://staging.kthais.com
+      ALLOWED_ORIGINS: https://staging.kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-staging-fm3uek:8000
     domains:
-      kthais-staging.kthais.com: {port: 8080, path: /api/v1}
+      staging.kthais.com: {port: 8080, path: /api/v1}
 
   # The switchover adds kthais.com: {port: 8080, path: /api/v1}; api.kthais.com is dropped then.
   production:
