@@ -37,10 +37,11 @@ defaults:
     - SESSION_KEY
     - JWT_PRIVATE_KEY
     # No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY yet: staging runs every commit on main and must not
-    # send real email. Secrets are per project, so the production switchover adds them back.
+    # send real email. Names are per project, so the PR for production's temporary host adds them back,
+    # with dummy values on staging.
     - LUMA_API_KEY
     - LUMA_MEMBERS_TIER_ID
-    # Cloudflare R2 until object storage moves to GleSYS (IT-39).
+    # Cloudflare R2 until object storage moves to GleSYS (IT-93).
     - R2_Access_Key_Id
     - R2_Secret_Access_Key
     - R2_Endpoint
