@@ -17,7 +17,7 @@ projects/<project>/
   project.yaml    # config, secret names, environments (staging, production)
   release.yaml    # the image each environment runs, tag@digest; written by the deploy bot
 terraform/        # one OpenTofu root: OpenBao (provider tokens) and Dokploy
-  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes, domains, databases
+  modules/project/  # a project's Dokploy side: project, environments, vault providers, apps, volumes, domains, databases, backups
 .github/workflows/
   pr.yml          # PR title
   tofu.yml        # checks and plan on PRs; apply on main, weekly and by hand

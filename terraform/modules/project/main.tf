@@ -107,7 +107,7 @@ locals {
     for e, c in local.environments : e => join("\n", concat(
       [for k in sort(keys(c.env)) : "${k}=${c.env[k]}"],
       [for k in c.secrets :
-      "${k}=$${{vault.${local.provider_name[e]}.${lookup(local.database_secret[e], k, local.secret_path[e])}:${k}}}"],
+      "${k}=$${{vault.${local.provider_name[e]}.${lookup(merge(local.database_secret[e], local.storage_secret[e]), k, local.secret_path[e])}:${k}}}"],
       [for k in c.shared :
       "${k}=$${{vault.${local.provider_name[e]}.shared/${e}:${k}}}"],
     ))

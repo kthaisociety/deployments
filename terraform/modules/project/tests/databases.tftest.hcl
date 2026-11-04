@@ -1,5 +1,6 @@
-# Databases (databases.tf): one instance per engine and environment, credentials only in OpenBao, and a
-# listed secret name reaching its engine's path. Mock providers, as in domains.tftest.hcl.
+# Databases (databases.tf): one instance per engine and environment, credentials only in OpenBao, a
+# listed secret name reaching its engine's path, and production's Postgres backed up. Mock providers, as
+# in domains.tftest.hcl.
 
 mock_provider "vault" {}
 mock_provider "random" {}
@@ -11,10 +12,13 @@ mock_provider "dokploy" {
     defaults = { id = "staging-id" }
   }
   mock_resource "dokploy_postgres" {
-    defaults = { app_name = "demo-env-postgres-abcdef" }
+    defaults = { id = "postgres-id", app_name = "demo-env-postgres-abcdef" }
   }
   mock_resource "dokploy_redis" {
     defaults = { app_name = "demo-env-redis-abcdef" }
+  }
+  mock_data "dokploy_destination" {
+    defaults = { id = "backups-id" }
   }
 }
 
@@ -37,9 +41,10 @@ run "no_databases_means_no_resources" {
   assert {
     condition = (
       length(dokploy_postgres.this) == 0 && length(dokploy_redis.this) == 0 &&
-      length(vault_kv_secret_v2.postgres_password) == 0 && length(vault_kv_secret_v2.redis_password) == 0
+      length(vault_kv_secret_v2.postgres_password) == 0 && length(vault_kv_secret_v2.redis_password) == 0 &&
+      length(dokploy_backup.postgres) == 0 && length(data.dokploy_destination.database_backups) == 0
     )
-    error_message = "Without databases, no database resources should exist."
+    error_message = "Without databases, no database resources should exist, and no backup destination is looked up."
   }
 }
 
@@ -89,6 +94,173 @@ run "every_environment_gets_its_own" {
       dokploy_postgres.this["staging"].database_password_wo_version == 1
     )
     error_message = "Credentials go under secret/<project>/<env>/database/, the password written once."
+  }
+}
+
+run "production_postgres_is_backed_up" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        secrets   = ["DATABASE_URL", "REDIS_URL"]
+        databases = { postgres = {}, redis = {} }
+      }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  assert {
+    condition = (
+      keys(dokploy_backup.postgres) == ["production"] &&
+      data.dokploy_destination.database_backups[0].name == "database-backups"
+    )
+    error_message = "Only production's Postgres should be backed up, to the database-backups destination."
+  }
+
+  assert {
+    condition = (
+      dokploy_backup.postgres["production"].service_id == "postgres-id" &&
+      dokploy_backup.postgres["production"].service_type == "postgres" &&
+      dokploy_backup.postgres["production"].database == "demo" &&
+      dokploy_backup.postgres["production"].destination_id == "backups-id" &&
+      dokploy_backup.postgres["production"].cron_expression == "0 0 * * *" &&
+      dokploy_backup.postgres["production"].keep_latest_count == 30
+    )
+    error_message = "Without backups, the backup should dump production's database to the destination every day, keeping 30."
+  }
+}
+
+run "backups_sets_schedule_and_keep" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        secrets   = ["DATABASE_URL"]
+        databases = { postgres = { backups = { schedule = "0 2 * * *", keep = 10 } } }
+      }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  assert {
+    condition = (
+      keys(dokploy_backup.postgres) == ["production"] &&
+      dokploy_backup.postgres["production"].cron_expression == "0 2 * * *" &&
+      dokploy_backup.postgres["production"].keep_latest_count == 10
+    )
+    error_message = "backups should set production's schedule and how many dumps are kept, and still not back up staging."
+  }
+}
+
+run "backups_with_one_setting_keeps_the_other_default" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        secrets   = ["DATABASE_URL"]
+        databases = { postgres = { backups = { keep = 7 } } }
+      }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  assert {
+    condition = (
+      dokploy_backup.postgres["production"].cron_expression == "0 0 * * *" &&
+      dokploy_backup.postgres["production"].keep_latest_count == 7
+    )
+    error_message = "A setting left out of backups should keep its default."
+  }
+}
+
+run "backups_under_redis_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        secrets   = ["REDIS_URL"]
+        databases = { redis = { backups = { keep = 7 } } }
+      }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "unknown_backups_setting_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        secrets   = ["DATABASE_URL"]
+        databases = { postgres = { backups = { enabled = false } } }
+      }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "malformed_schedule_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        secrets   = ["DATABASE_URL"]
+        databases = { postgres = { backups = { schedule = "daily" } } }
+      }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "keep_below_seven_is_rejected" {
+  command = plan
+
+  variables {
+    config = {
+      repo = "example/demo"
+      defaults = {
+        secrets   = ["DATABASE_URL"]
+        databases = { postgres = { backups = { keep = 6 } } }
+      }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  expect_failures = [var.config]
+}
+
+run "no_postgres_means_no_backup" {
+  command = plan
+
+  variables {
+    config = {
+      repo         = "example/demo"
+      defaults     = { secrets = ["REDIS_URL"], databases = { redis = {} } }
+      environments = { staging = {}, production = {} }
+    }
+  }
+
+  assert {
+    condition     = length(dokploy_backup.postgres) == 0 && length(data.dokploy_destination.database_backups) == 0
+    error_message = "Redis isn't backed up, and a project without Postgres doesn't need the destination to exist."
   }
 }
 

@@ -8,6 +8,9 @@ defaults:
     - REDIS_URL
     - OIDC_CLIENT_ID
     - OIDC_CLIENT_SECRET
+    - TOKEN_ENCRYPTION_KEY
+    - FATHOM_CLIENT_ID
+    - FATHOM_CLIENT_SECRET
   shared: []
   databases:
     postgres: {}

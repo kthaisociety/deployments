@@ -35,6 +35,11 @@ DATABASE_KEYS = {
     "redis": ("REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_URL"),
 }
 KEY_ENGINE = {key: engine for engine, keys in DATABASE_KEYS.items() for key in keys}
+# The settings of a project's object storage, as in terraform/modules/project/storage.tf. infrastructure
+# writes them for a project with storage; an app reads one by listing its name in secrets.
+STORAGE_KEYS = ("S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_ENDPOINT", "S3_REGION", "S3_BUCKET")
+# And one per bucket of a buckets list, S3_BUCKET_<NAME>, as storage.tf's storage_bucket_pattern.
+STORAGE_BUCKET_PATTERN = r"^S3_BUCKET_[A-Z0-9]+(_[A-Z0-9]+)*$"
 MUST_SHOW_ENTRY = ("env", "secrets", "shared", "volumes")
 REFERENCE_FENCE = "yaml"
 EXCERPT_FENCE = "yaml excerpt"
@@ -176,6 +181,8 @@ def _value_message(error, parent) -> str:
         return f"must start with /, got {error.instance!r}"
     if error.validator == "pattern" and "\\r\\n" in error.validator_value:
         return "must be a string without a newline"
+    if error.validator == "pattern" and parent[-2:] == ["backups", "schedule"]:
+        return f'must be a cron schedule: five fields of numbers, * , / and -, such as "0 2 * * *", got {error.instance!r}'
     if error.validator == "not" and parent[-1:] == ["custom_cert_resolver"]:
         return "only allowed with certificate_type custom"
     if error.validator == "uniqueItems":
@@ -299,7 +306,7 @@ def _check_project(file, text, validator) -> tuple[list[Problem], object]:
     problems = _key_problems(file, doc)
     if problems:
         return problems, None
-    return _schema_problems(file, doc, validator) + _collision_problems(file, doc) + _database_problems(file, doc), doc
+    return _schema_problems(file, doc, validator) + _collision_problems(file, doc) + _database_problems(file, doc) + _storage_problems(file, doc), doc
 
 
 def _as_map(value) -> dict:
@@ -408,7 +415,7 @@ def _reference_problems(reference, ref_line, validator, schema) -> list[Problem]
     problems = _key_problems(GUIDE, doc, ref_line)
     if problems:
         return problems
-    problems = _schema_problems(GUIDE, doc, validator, ref_line) + _database_problems(GUIDE, doc, ref_line)
+    problems = _schema_problems(GUIDE, doc, validator, ref_line) + _database_problems(GUIDE, doc, ref_line) + _storage_problems(GUIDE, doc, ref_line)
     if doc is None:
         return problems
     for steps, message in _missing_reference_keys(doc, schema, schema):
@@ -438,6 +445,36 @@ def _excerpt_problems(excerpts, reference) -> list[Problem]:
         for line, body in excerpts
         if not _is_run_of(_unindented(body), ref_lines)
     ]
+
+
+def _storage_problems(file, doc, offset=0) -> list[Problem]:
+    """A Problem for each storage setting in env or shared: the app gets one only by listing it in secrets.
+
+    Unlike a database's names, these are never ordinary values: they always read the storage secret
+    (terraform/modules/project/storage.tf), so they're rejected whether or not the project has storage.
+    A name in both secrets and env or shared is the collision rule's.
+    """
+    defaults = _as_map(_as_map(doc).get("defaults"))
+    secrets = [name for name in _as_list(defaults.get("secrets")) if isinstance(name, str)]
+    places = [(["defaults", "env", name], name) for name in _as_map(defaults.get("env"))]
+    places += [(["defaults", "shared", i], name) for i, name in enumerate(_as_list(defaults.get("shared")))]
+    for env_name, config in _as_map(_as_map(doc).get("environments")).items():
+        places += [(["environments", env_name, "env", name], name) for name in _as_map(_as_map(config).get("env"))]
+    return [
+        Problem(
+            file,
+            _line_at(doc, steps) + offset,
+            _yq(steps),
+            f"{name} is an object storage setting infrastructure writes to OpenBao. List it in defaults.secrets instead",
+        )
+        for steps, name in places
+        if _is_storage_name(name) and name not in secrets
+    ]
+
+
+def _is_storage_name(name) -> bool:
+    """Whether name is one of the object storage settings: STORAGE_KEYS, or a bucket's S3_BUCKET_<NAME>."""
+    return isinstance(name, str) and (name in STORAGE_KEYS or re.fullmatch(STORAGE_BUCKET_PATTERN, name) is not None)
 
 
 def _database_problems(file, doc, offset=0) -> list[Problem]:
@@ -577,12 +614,15 @@ def check(root: Path) -> list[Problem]:
       a name in two of env, secrets and shared is a Problem at the env key when env is one of the
       two, otherwise at the shared entry, and its message gives the other one's path.
     - A name listed twice in secrets, or twice in shared, is a Problem naming it.
-    - databases sits under defaults only, with known engines (postgres, redis) whose only setting is
-      image. databases under an environment says to declare it under defaults.
+    - databases sits under defaults only, with known engines (postgres, redis) whose setting is
+      image, and for postgres also backups: schedule, five cron fields of numbers, * , / and - (the
+      message shows one), and keep, an integer of at least 7. databases under an environment says to
+      declare it under defaults.
     - In a project, the template and the guide reference: a name in defaults.secrets that an engine
       writes (DATABASE_KEYS) needs that engine under defaults.databases; an engine needs at least one
       of its names in defaults.secrets; and an enabled engine's name in env or shared, but not in
-      secrets, says to list it in secrets. Each is a Problem at the offending entry.
+      secrets, says to list it in secrets. So does an object storage name (STORAGE_KEYS, or
+      S3_BUCKET_<NAME>) in env or shared, with or without storage. Each is a Problem at the offending entry.
     - A domain needs port, an integer from 1 to 65535. certificate_type is letsencrypt, none or
       custom (the message lists them). custom_cert_resolver is required with certificate_type
       custom and rejected otherwise. https: false allows only certificate_type none. path and

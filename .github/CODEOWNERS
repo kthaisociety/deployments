@@ -1,3 +1,5 @@
 # Code owners must approve every PR (ruleset: require code owner review).
 # The last matching pattern wins.
-* @kthaisociety/platform-engineers
+# Two named reviewers, not the whole platform-engineers team, so each review request goes to someone
+# who'll act on it. Each reviews the other's PRs.
+* @sammosios @pspanoudakis

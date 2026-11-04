@@ -147,7 +147,8 @@ jobs:
           done <<<"$listed"
           $ok
       # A project's policies and empty secret paths come from kthaisociety/infrastructure (this repo's CI
-      # can't write policies). Fail early, with the line to add, if a project or environment isn't there.
+      # can't write policies). Fail early, with the line to add, if a project or environment isn't there,
+      # or if it lists object storage names its storage there doesn't have (else the deploy fails on them).
       - name: listed in infrastructure's projects.yaml
         working-directory: projects
         run: |
@@ -169,6 +170,21 @@ jobs:
             while IFS= read -r e; do
               grep -qxF "$e" <<<"$listed" || { echo "::error file=projects/$f::$p's environment '$e' isn't in kthaisociety/infrastructure terraform/openbao/projects.yaml. Add it to $p's environments there."; ok=false; }
             done < <(yq -r '.environments | keys | .[]' "$f")
+            # Object storage names (terraform/modules/project/storage.tf) need storage there, and each bucket
+            # name a bucket: S3_BUCKET for `storage: {}`, S3_BUCKET_<NAME> per name of its buckets list.
+            names=$(yq -r '[.defaults.secrets // [], (.environments // {} | .[] | .secrets // [])] | flatten | .[]' "$f" |
+              grep -xE 'S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|ENDPOINT|REGION|BUCKET)|S3_BUCKET_[A-Z0-9]+(_[A-Z0-9]+)*' | sort -u || true)
+            [ -n "$names" ] || continue
+            if [ "$(P="$p" yq -r '.[strenv(P)] | has("storage")' /tmp/infra-projects.yaml)" != true ]; then
+              echo "::error file=projects/$f::$p lists object storage names ($(echo $names)), but has no storage in kthaisociety/infrastructure terraform/openbao/projects.yaml. Add storage: {} to $p there."
+              ok=false
+              continue
+            fi
+            buckets=$(P="$p" yq -r '(.[strenv(P)].storage.buckets // []) | .[] | upcase | sub("-", "_")' /tmp/infra-projects.yaml | sed 's/^/S3_BUCKET_/')
+            [ -n "$buckets" ] || buckets=S3_BUCKET
+            for n in $(grep -E '^S3_BUCKET' <<<"$names" || true); do
+              grep -qxF "$n" <<<"$buckets" || { echo "::error file=projects/$f::$p lists $n, but its storage in kthaisociety/infrastructure terraform/openbao/projects.yaml has $(echo $buckets)."; ok=false; }
+            done
           done
           $ok
 
