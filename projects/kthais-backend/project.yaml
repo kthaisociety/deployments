@@ -5,7 +5,8 @@
 # the same host reads it.
 # Runs a daily background scheduler (Team Questions): it must never run next to the old UI-managed app
 # against the same data (app-migration.md §1.3, §6.5).
-# Production's domain is added in its own PR at the switchover (app-migration.md §7.4).
+# Production runs on the temporary host next.kthais.com until the switchover, whose PR moves it to
+# kthais.com (app-migration.md §6.5, §7.4).
 repo: kthaisociety/kthais-backend
 
 # For every environment unless it says otherwise.
@@ -36,9 +37,10 @@ defaults:
     - GOOGLE_CLIENT_SECRET
     - SESSION_KEY
     - JWT_PRIVATE_KEY
-    # No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY yet: staging runs every commit on main and must not
-    # send real email. Names are per project, so the PR for production's temporary host adds them back,
-    # with dummy values on staging.
+    # SES. Staging runs every commit on main and must not send real email, so its values are dummies:
+    # plain strings, not <...> placeholders, which the backend rejects at start.
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
     - LUMA_API_KEY
     - LUMA_MEMBERS_TIER_ID
     # Cloudflare R2 until object storage moves to GleSYS (IT-93).
@@ -59,8 +61,8 @@ defaults:
     redis: {}
 
 environments:
-  # Staging secrets are new and inert: a staging OAuth client, its own JWT pair and session key, no SES
-  # keys (sending fails and is logged), a dummy Luma key.
+  # Staging secrets are new and inert: a staging OAuth client, its own JWT pair and session key, dummy
+  # SES keys (sending fails and is logged), a dummy Luma key.
   # BACKEND_URL is the site's host: the OAuth redirect URI is BACKEND_URL/api/v1/auth/google/callback.
   # ALLOWED_ORIGINS starts with that host, because a same-origin request carries no Origin header and the
   # OAuth start then falls back to the first entry.
@@ -75,10 +77,14 @@ environments:
     domains:
       staging.kthais.com: {port: 8080, path: /api/v1}
 
-  # The switchover adds kthais.com: {port: 8080, path: /api/v1}; api.kthais.com is dropped then.
+  # next.kthais.com is the temporary host for testing production (app-migration.md §6.5). The switchover
+  # swaps it for kthais.com: {port: 8080, path: /api/v1}, sets the three URLs back to
+  # https://kthais.com, and api.kthais.com is dropped then.
   production:
     env:
-      BACKEND_URL: https://kthais.com
-      FRONTEND_URL: https://kthais.com
-      ALLOWED_ORIGINS: https://kthais.com
+      BACKEND_URL: https://next.kthais.com
+      FRONTEND_URL: https://next.kthais.com
+      ALLOWED_ORIGINS: https://next.kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000
+    domains:
+      next.kthais.com: {port: 8080, path: /api/v1}
