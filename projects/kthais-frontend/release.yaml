@@ -1,4 +1,4 @@
 # The image each environment runs, <image>:<tag>@sha256:<digest>. Written by deploy.yml; edit by hand
 # only to roll back (revert its commit). null: not deployed yet.
-staging: ghcr.io/kthaisociety/kthais-frontend:sha-b5563d0@sha256:f44a5fefb146a4ec47db9a8538dd54a56c86b842c0d891fb6ad33ff59c7e730d
+staging: ghcr.io/kthaisociety/kthais-frontend:sha-472725e@sha256:b5c02a9ea8222678307dd367c5e6d12f4fbddac3316fb074dbf73959ce877f16
 production: null
