@@ -6,7 +6,6 @@ repo: kthaisociety/onboarding-service
 # For every environment unless it says otherwise.
 defaults:
   env:
-    BACKEND_URL: http://kthaisbackend-backend-hzwlri:8080/api/v1
     PORTAL_BASE_URL: https://kthais.com/onboarding
     MATTERMOST_URL: https://chat.aisociety.se
     GOOGLE_ADMIN_IMPERSONATE_AS: onboarding-automation@kthais.com
@@ -26,5 +25,12 @@ defaults:
 environments:
   # Its secrets are inert (a service account JSON with no real key, a dummy Mattermost token, its own
   # shared secret): it starts and resolves every reference, and can't touch a real account.
-  staging: {}
-  production: {}
+  # BACKEND_URL: the new kthais-backend, on the pipeline (IT-28).
+  staging:
+    env:
+      BACKEND_URL: http://kthais-backend-staging-hdxxwm:8080/api/v1
+  # BACKEND_URL: the old UI-managed backend until the switchover, whose PR points it at the new
+  # kthais-backend's production app.
+  production:
+    env:
+      BACKEND_URL: http://kthaisbackend-backend-hzwlri:8080/api/v1
