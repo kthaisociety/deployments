@@ -1,0 +1,4 @@
+# The image each environment runs, <image>:<tag>@sha256:<digest>. Written by deploy.yml; edit by hand
+# only to roll back (revert its commit). null: not deployed yet.
+staging: null
+production: null

@@ -1,0 +1,46 @@
+# pyrmit-backend: the FastAPI API (auth, chat with RAG, ingestion). Shares a host with the frontend project
+# (pyrmit): Traefik sends /api here and every other path to the frontend, so the browser stays same-origin.
+repo: kthaisociety/pyrmit
+image: ghcr.io/kthaisociety/pyrmit-backend
+
+# For every environment unless it says otherwise.
+defaults:
+  env:
+    ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+    ACCESS_GATE_COOKIE_SECURE: "true"
+    ACCESS_GATE_COOKIE_SAMESITE: lax
+
+  # Names only. Values in OpenBao at secret/pyrmit-backend/<environment>.
+  secrets:
+    - DATABASE_URL
+    - AI_GATEWAY_API_KEY
+    - OPENAI_API_KEY
+    - MISTRAL_API_KEY
+    - JWT_SECRET_KEY
+    - ACCESS_GATE_PASSWORD
+
+  # Values in OpenBao at secret/shared/<environment>, which every project can read.
+  shared: []
+
+  # pgvector is required: law_chunks and document_chunks store 3072-dimension embeddings.
+  databases:
+    postgres: {image: "pgvector/pgvector:pg17"}
+
+environments:
+  staging:
+    env:
+      CORS_ALLOWED_ORIGINS: https://migration.pyrmit-staging.kthais.com
+      APP_ENV: development
+    domains:
+      migration.pyrmit-staging.kthais.com:
+        port: 8000
+        path: /api
+
+  production:
+    env:
+      CORS_ALLOWED_ORIGINS: https://migration.pyrmit.kthais.com
+      APP_ENV: production
+    domains:
+      migration.pyrmit.kthais.com:
+        port: 8000
+        path: /api
