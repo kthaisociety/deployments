@@ -2,7 +2,8 @@
 # as /runtime-env.js), so one image runs in both environments. kthais-backend is served on this same
 # host under /api/v1, so BACKEND_URL is the site's own host. Its middleware verifies the backend's
 # host-only __Host-jwt cookie with the shared JWT_PUBLIC_KEY.
-# Production's domain is added in its own PR at the switchover (app-migration.md §7.4).
+# Production runs on the temporary host next.kthais.com until the switchover, whose PR moves it to
+# kthais.com (app-migration.md §6.5, §7.4).
 repo: kthaisociety/kthais-frontend
 
 # For every environment unless it says otherwise. NODE_ENV, PORT and HOSTNAME come from the Dockerfile.
@@ -28,7 +29,10 @@ environments:
     domains:
       staging.kthais.com: {port: 3000}
 
+  # next.kthais.com until the switchover, which swaps it for kthais.com and sets BACKEND_URL back.
   production:
     env:
-      BACKEND_URL: https://kthais.com
+      BACKEND_URL: https://next.kthais.com
       ONBOARDING_SERVICE_URL: http://onboarding-service-production-km3a0y:8000
+    domains:
+      next.kthais.com: {port: 3000}
