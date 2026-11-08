@@ -25,12 +25,11 @@ defaults:
 environments:
   # Its secrets are inert (a service account JSON with no real key, a dummy Mattermost token, its own
   # shared secret): it starts and resolves every reference, and can't touch a real account.
-  # BACKEND_URL: the new kthais-backend, on the pipeline (IT-28).
+  # BACKEND_URL: the new kthais-backend (IT-28).
   staging:
     env:
       BACKEND_URL: http://kthais-backend-staging-hdxxwm:8080/api/v1
-  # BACKEND_URL: the old UI-managed backend until the switchover, whose PR points it at the new
-  # kthais-backend's production app.
+  # BACKEND_URL: the new kthais-backend's production app, since the switchover (IT-28).
   production:
     env:
-      BACKEND_URL: http://kthaisbackend-backend-hzwlri:8080/api/v1
+      BACKEND_URL: http://kthais-backend-production-9e58pc:8080/api/v1
