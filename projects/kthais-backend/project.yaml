@@ -49,12 +49,6 @@ defaults:
     - S3_ENDPOINT
     - S3_REGION
     - S3_BUCKET_FILES
-    # Cloudflare R2: read by kthais-backend up to and including 1.0.0, so production keeps its files on
-    # R2 until it runs a release that reads S3_*. Removed with R2 itself, after the switchover (IT-93).
-    - R2_Access_Key_Id
-    - R2_Secret_Access_Key
-    - R2_Endpoint
-    - R2_Bucket
 
   # Values in OpenBao at secret/shared/<environment>, which every project can read.
   # JWT_PUBLIC_KEY: also read by kthais-frontend; pairs with JWT_PRIVATE_KEY above.
