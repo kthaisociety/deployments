@@ -1,5 +1,5 @@
 # pyrmit-backend: the FastAPI API (auth, chat with RAG, ingestion). Shares a host with the frontend project
-# (pyrmit): Traefik sends /api here and every other path to the frontend, so the browser stays same-origin.
+# (pyrmit-frontend): Traefik sends /api here and every other path to the frontend, so the browser stays same-origin.
 repo: kthaisociety/pyrmit
 image: ghcr.io/kthaisociety/pyrmit-backend
 

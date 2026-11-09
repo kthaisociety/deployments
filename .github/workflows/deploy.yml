@@ -26,7 +26,7 @@ on:
           - kthais-frontend
           - lucid
           - onboarding-service
-          - pyrmit
+          - pyrmit-frontend
           - pyrmit-backend
       environment:
         description: Environment.
