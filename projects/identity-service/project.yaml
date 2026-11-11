@@ -9,11 +9,12 @@ repo: kthaisociety/identity-service
 defaults:
   env:
     GIN_MODE: release
-  # Names only. Values in OpenBao at secret/identity-service/<environment>; DATABASE_URL is written by
-  # the pipeline under .../database/. The signing and encryption keys must stay the same across deploys,
-  # or every signed-in user is signed out.
+  # Names only. Values in OpenBao at secret/identity-service/<environment>; DATABASE_URL and REDIS_URL
+  # are written by the pipeline under .../database/. The signing and encryption keys must stay the same
+  # across deploys, or every signed-in user is signed out.
   secrets:
     - DATABASE_URL
+    - REDIS_URL
     - GOOGLE_CLIENT_ID
     - GOOGLE_CLIENT_SECRET
     - OIDC_SIGNING_KEY_PEM_BASE64
@@ -26,6 +27,7 @@ defaults:
   shared: []
   databases:
     postgres: {}
+    redis: {}
 
 environments:
   staging:
