@@ -24,6 +24,7 @@ on:
         options:
           - kthais-backend
           - kthais-frontend
+          - identity-service
           - lucid
           - onboarding-service
       environment:
