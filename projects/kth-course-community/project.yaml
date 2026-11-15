@@ -45,7 +45,11 @@ environments:
     domains:
       kthcoursecommunity-staging.kthais.com: {port: 3000}
 
-  # Holds the real data once it's copied from Neon at the switchover (app-migration.md §7).
-  # No domain and no BETTER_AUTH_URL yet: production's host is still being agreed with the app's owners.
-  # Both are added before the first release.
-  production: {}
+  # Holds the real data once it's copied from Neon at the switchover (app-migration.md §7). Its host is
+  # new: the old hand-made app only ever served kthcoursecommunity-dev.kthais.com, so the domain is here
+  # from the start and nothing moves at the switchover.
+  production:
+    env:
+      BETTER_AUTH_URL: https://kthcoursecommunity.kthais.com
+    domains:
+      kthcoursecommunity.kthais.com: {port: 3000}
