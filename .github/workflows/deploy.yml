@@ -25,6 +25,7 @@ on:
           - kthais-backend
           - kthais-frontend
           - identity-service
+          - kth-course-community
           - lucid
           - onboarding-service
           - pyrmit-frontend
