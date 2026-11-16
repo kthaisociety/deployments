@@ -11,6 +11,9 @@ defaults:
     AWS_REGION: eu-north-1
     SES_SENDER: contact@kthais.com
     SES_REPLY_TO: contact@kthais.com
+    # Apply the committed migrations before the server starts. The image does nothing to the database
+    # without it, so that the old app, built from the same Dockerfile, never migrates Neon.
+    MIGRATE_ON_START: "true"
 
   # Names only. Values in OpenBao at secret/kth-course-community/<environment>; DATABASE_URL is written
   # by the pipeline under .../database/.
