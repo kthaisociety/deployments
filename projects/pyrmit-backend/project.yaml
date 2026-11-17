@@ -19,6 +19,7 @@ defaults:
     - JWT_SECRET_KEY
     - ACCESS_GATE_PASSWORD
     - API_KEY_ENCRYPTION_KEY
+    - OWNER_EMAILS
 
   # Values in OpenBao at secret/shared/<environment>, which every project can read.
   shared: []
