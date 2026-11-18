@@ -32,6 +32,13 @@ variable "config" {
     ]))
     error_message = "A domain in project.yaml has an unknown setting. Allowed: port, https, certificate_type, custom_cert_resolver, path, internal_path, strip_path, enabled, forward_auth_enabled, custom_entrypoint."
   }
+  # The staging gate (staging_gate.tf): on unless staging says private: false. Production has no gate.
+  validation {
+    condition = alltrue([
+      for e, c in var.config.environments : try(c.private, null) == null || (e == "staging" && try(c.private == true || c.private == false, false))
+    ])
+    error_message = "private in project.yaml goes under staging only, and is true or false. Production has no staging gate."
+  }
   # Databases (databases.tf). What the code relies on is the same everywhere, so only under defaults.
   validation {
     condition     = alltrue([for e, c in var.config.environments : try(c.databases, null) == null])

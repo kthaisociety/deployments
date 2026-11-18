@@ -52,7 +52,7 @@ properties:
     required: [staging, production]
     properties:
       staging:
-        $ref: "#/$defs/environment"
+        $ref: "#/$defs/stagingEnvironment"
       production:
         $ref: "#/$defs/environment"
 
@@ -104,6 +104,22 @@ $defs:
         type: object
         additionalProperties:
           $ref: "#/$defs/domain"
+
+  # Staging is an environment plus private: true (the default) puts the staging gate's basic auth in
+  # front of every domain (terraform/modules/project/staging_gate.tf). false only for an app the gate
+  # would break, with a comment saying why. Production has no gate, so it doesn't take private.
+  stagingEnvironment:
+    type: object
+    additionalProperties: false
+    properties:
+      env:
+        $ref: "#/$defs/env"
+      domains:
+        type: object
+        additionalProperties:
+          $ref: "#/$defs/domain"
+      private:
+        type: boolean
 
   domain:
     type: object

@@ -54,6 +54,7 @@ defaults:
     /data: data
 environments:
   staging:
+    private: true
     env:
       MODE: debug
     domains:
@@ -68,7 +69,12 @@ environments:
         enabled: true
         forward_auth_enabled: false
         custom_entrypoint: websecure
-  production: {}
+  production:
+    env:
+      MODE: quiet
+    domains:
+      example.com:
+        port: 3000
 """
 
 
@@ -1097,3 +1103,25 @@ def test_database_keys_match_module():
     block = re.search(r"database_keys = \{(.*?)\n  \}", databases, re.S).group(1)
     module = {engine: tuple(re.findall(r'"([A-Z_]+)"', keys)) for engine, keys in re.findall(r"(\w+)\s*=\s*\[([^\]]*)\]", block)}
     assert module == DATABASE_KEYS
+
+
+# The staging gate's opt-out
+
+
+def test_staging_private_false_is_allowed(repo):
+    """private: false under staging opts the app out of the staging gate."""
+    write(repo, PROJECT, project_yaml(staging="\n    private: false\n"))
+    assert check(repo) == []
+
+
+def test_staging_private_must_be_boolean(repo):
+    """private is true or false, not a string."""
+    write(repo, PROJECT, project_yaml(staging='\n    private: "no"\n'))
+    assert paths(check(repo)) == {".environments.staging.private"}
+
+
+def test_production_has_no_private(repo):
+    """Production has no gate, so private there is an unknown key."""
+    write(repo, PROJECT, project_yaml(production="\n    private: true\n"))
+    message = message_at(check(repo), ".environments.production.private")
+    assert message.startswith("unknown key")

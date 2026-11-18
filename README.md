@@ -59,6 +59,8 @@ reports the same problems the PR's `check` does.
 2. Left out: HTTPS on, with a Let's Encrypt certificate; everything else is Dokploy's default. A
    misspelt setting fails the plan instead of being ignored.
 3. Merging creates the domain in Dokploy. Removing its lines removes it; other domains are untouched.
+4. A staging domain asks for the staging gate's password before anything loads; production's don't. See
+   [the guide's staging gate section](docs/project-yaml.md#staging-gate).
 
 ## Rules
 

@@ -1,7 +1,12 @@
 # The domain defaults and rejection rules README.md promises. Mock providers: no OpenBao, no Dokploy,
 # no secrets, so the check job runs these on every PR.
 
-mock_provider "vault" {}
+# The staging gate's password has a version (staging_gate.tf).
+mock_provider "vault" {
+  mock_data "vault_generic_secret" {
+    defaults = { data_json = "{\"current_version\":1}" }
+  }
+}
 # Plan only: a mock apply fails on dokploy_vault_provider's write-only token_wo. The app's id is fixed so
 # a plan knows it.
 mock_provider "dokploy" {
