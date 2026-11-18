@@ -1,4 +1,4 @@
 # The image each environment runs, <image>:<tag>@sha256:<digest>. Written by deploy.yml; edit by hand
 # only to roll back (revert its commit). null: not deployed yet.
-staging: ghcr.io/kthaisociety/pyrmit-backend:sha-09bb87e@sha256:f6cf33b074a4bb7da3c4abba545c3d7a1cdad1745fcd35c1c39a3bcaa37e53ec
+staging: ghcr.io/kthaisociety/pyrmit-backend:sha-7e22ead@sha256:0393263a4d03326e4e788576709d2966e76dd96df1d205ada0091d428b768f07
 production: null
