@@ -1,0 +1,42 @@
+# identity-service: sign-in for every KTHAIS app (OIDC, Google behind it), and later users, roles and
+# Workspace accounts. Two listeners (its docs/adr/0003): 8000 public (sign-in), the only port with a
+# domain; 8001 internal (/v1, for other services), reached on the internal network only and never given a
+# domain.
+# Production has no domain yet: it gets one with identity's first production release (Linear IT-92).
+repo: kthaisociety/identity-service
+
+# For every environment unless it says otherwise.
+defaults:
+  env:
+    GIN_MODE: release
+  # Names only. Values in OpenBao at secret/identity-service/<environment>; DATABASE_URL and REDIS_URL
+  # are written by the pipeline under .../database/. The signing and encryption keys must stay the same
+  # across deploys, or every signed-in user is signed out.
+  secrets:
+    - DATABASE_URL
+    - REDIS_URL
+    - GOOGLE_CLIENT_ID
+    - GOOGLE_CLIENT_SECRET
+    - OIDC_SIGNING_KEY_PEM_BASE64
+    - OIDC_CRYPTO_KEY_BASE64
+    # The apps allowed to sign in, with their secrets and exact redirect URIs.
+    - OIDC_CLIENTS_JSON
+    # What callers of the internal API (/v1) send as X-Service-Secret. Not in shared, which every
+    # project can read: /v1 has no callers yet. Where callers get it is decided with the first one.
+    - IDENTITY_SERVICE_SECRET
+  shared: []
+  databases:
+    postgres: {}
+    redis: {}
+
+environments:
+  staging:
+    env:
+      OIDC_ISSUER: https://identity-staging.kthais.com
+      GOOGLE_REDIRECT_URI: https://identity-staging.kthais.com/auth/callback
+    domains:
+      identity-staging.kthais.com: {port: 8000}
+  production:
+    env:
+      OIDC_ISSUER: https://identity.kthais.com
+      GOOGLE_REDIRECT_URI: https://identity.kthais.com/auth/callback
