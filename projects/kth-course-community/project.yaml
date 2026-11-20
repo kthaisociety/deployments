@@ -1,0 +1,62 @@
+# kth-course-community: course search, reviews and the community graph for KTH students. One image:
+# Next.js serves the UI, the tRPC API (/api/trpc), Better Auth (/api/auth) and the transcript upload.
+# Sign-in is its own (Google, GitHub and email links), open to any account: an exception to
+# identity-service's ADR 0002, which only covers kthais.com sign-ins for now (Linear IT-53).
+repo: kthaisociety/KTH-Course-Community
+
+# For every environment unless it says otherwise. NODE_ENV, PORT and HOSTNAME come from the Dockerfile.
+defaults:
+  env:
+    # SES, for the sign-in links sent by email.
+    AWS_REGION: eu-north-1
+    SES_SENDER: contact@kthais.com
+    SES_REPLY_TO: contact@kthais.com
+    # Apply the committed migrations before the server starts. The image does nothing to the database
+    # without it, so that the old app, built from the same Dockerfile, never migrates Neon.
+    MIGRATE_ON_START: "true"
+
+  # Names only. Values in OpenBao at secret/kth-course-community/<environment>; DATABASE_URL is written
+  # by the pipeline under .../database/.
+  secrets:
+    - DATABASE_URL
+    - BETTER_AUTH_SECRET
+    - GOOGLE_CLIENT_ID
+    - GOOGLE_CLIENT_SECRET
+    - GITHUB_CLIENT_ID
+    - GITHUB_CLIENT_SECRET
+    # Vercel AI Gateway: embeds each search query, and the courses at ingest. One key per environment, on
+    # the KTHAIS Vercel account, each with its own budget cap.
+    - AI_GATEWAY_API_KEY
+    # SES. Staging runs every commit on main and must not send real email, so its values are dummies and
+    # email sign-in fails there (a way for staging to send mail is IT-116). Production has the old app's
+    # keys, which retire with it.
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+
+  # Values in OpenBao at secret/shared/<environment>, which every project can read.
+  shared: []
+
+  # pgvector is required: courses store 1536-dimension embeddings under an hnsw index. pg_trgm, which
+  # the schema also uses, is in this image too.
+  databases:
+    postgres:
+      image: pgvector/pgvector:0.8.7-pg17
+
+environments:
+  # Fake seed data only: staging's database isn't backed up and can be wiped at any time.
+  # BETTER_AUTH_URL is the public origin: the OAuth callbacks are BETTER_AUTH_URL/api/auth/callback/google
+  # and .../github.
+  staging:
+    env:
+      BETTER_AUTH_URL: https://kthcoursecommunity-staging.kthais.com
+    domains:
+      kthcoursecommunity-staging.kthais.com: {port: 3000}
+
+  # Holds the real data once it's copied from Neon at the switchover (app-migration.md §7). Its host is
+  # new: the old hand-made app only ever served kthcoursecommunity-dev.kthais.com, so the domain is here
+  # from the start and nothing moves at the switchover.
+  production:
+    env:
+      BETTER_AUTH_URL: https://kthcoursecommunity.kthais.com
+    domains:
+      kthcoursecommunity.kthais.com: {port: 3000}
