@@ -24,8 +24,12 @@ defaults:
     - GOOGLE_CLIENT_SECRET
     - GITHUB_CLIENT_ID
     - GITHUB_CLIENT_SECRET
-    # Vercel AI Gateway: embeds each search query, and the courses at ingest.
+    # Vercel AI Gateway: embeds each search query, and the courses at ingest. One key per environment, on
+    # the KTHAIS Vercel account, each with its own budget cap.
     - AI_GATEWAY_API_KEY
+    # SES. Staging runs every commit on main and must not send real email, so its values are dummies and
+    # email sign-in fails there (a way for staging to send mail is IT-116). Production has the old app's
+    # keys, which retire with it.
     - AWS_ACCESS_KEY_ID
     - AWS_SECRET_ACCESS_KEY
 
