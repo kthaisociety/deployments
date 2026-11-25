@@ -1,7 +1,12 @@
 # The app's env: plain values, then one OpenBao reference per secret name and per shared name. Mock
 # providers, as in domains.tftest.hcl.
 
-mock_provider "vault" {}
+# The staging gate's password has a version (staging_gate.tf).
+mock_provider "vault" {
+  mock_data "vault_generic_secret" {
+    defaults = { data_json = "{\"current_version\":1}" }
+  }
+}
 mock_provider "dokploy" {
   mock_resource "dokploy_application" {
     defaults = { id = "app-id" }

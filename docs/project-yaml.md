@@ -37,6 +37,7 @@ defaults:
     /data: app-data
 environments:
   staging:
+    private: true
     env:
       LOG_LEVEL: debug
     domains:
@@ -52,6 +53,8 @@ environments:
         forward_auth_enabled: false
         custom_entrypoint: websecure
   production:
+    env:
+      LOG_LEVEL: warn
     domains:
       example.kthais.com:
         port: 8000
@@ -211,6 +214,7 @@ Every environment also needs a corresponding line in that project's `release.yam
 ```yaml excerpt
 environments:
   staging:
+    private: true
     env:
       LOG_LEVEL: debug
     domains:
@@ -226,9 +230,32 @@ environments:
         forward_auth_enabled: false
         custom_entrypoint: websecure
   production:
+    env:
+      LOG_LEVEL: warn
     domains:
       example.kthais.com:
         port: 8000
+```
+
+## Staging gate
+
+Staging is for us only. Every staging domain asks for a username and password before the app sees
+the request: username `kthais`, and the password in 1Password as "Staging gate". It's one password for
+all of staging, kept by infra admins in OpenBao (infrastructure's
+[app delivery guide](https://github.com/kthaisociety/infrastructure/blob/main/docs/app-delivery.md#23-its-secrets-in-openbao)).
+Production has no gate.
+
+`private` under `staging` is optional and defaults to `true`. Set `private: false` only when the gate
+would break the app, with a comment saying why, such as:
+
+- Another service calls this app on its public host, from a server. That request has no password.
+  Prefer calling the app on its internal name (`http://<app>:<port>`), which skips the gate.
+- The browser sends its own `Authorization` header to this host, such as a bearer token. The gate
+  uses that header too, so it rejects the request.
+
+```yaml excerpt
+  staging:
+    private: true
 ```
 
 ## Domains

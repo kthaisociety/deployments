@@ -31,6 +31,9 @@ defaults:
 
 environments:
   staging:
+    # No staging gate: every staging app's server fetches its OIDC discovery and keys from this public
+    # host, with no password. Its pages are a sign-in, which is its own gate.
+    private: false
     env:
       OIDC_ISSUER: https://identity-staging.kthais.com
       GOOGLE_REDIRECT_URI: https://identity-staging.kthais.com/auth/callback

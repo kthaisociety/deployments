@@ -70,6 +70,9 @@ environments:
   # The domain has a path and no strip_path: the backend's routes start with /api/v1, and the frontend
   # keeps every other path on the same host.
   staging:
+    # No staging gate yet: kthais-frontend's server calls this app on staging.kthais.com, its public host,
+    # with no password. Gate it once kthais-frontend calls it on its internal name instead.
+    private: false
     env:
       BACKEND_URL: https://staging.kthais.com
       FRONTEND_URL: https://staging.kthais.com

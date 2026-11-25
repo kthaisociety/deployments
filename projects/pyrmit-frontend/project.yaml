@@ -10,6 +10,9 @@ defaults:
 
 environments:
   staging:
+    # No staging gate: it shares its host with pyrmit-backend, which can't have one (see its project.yaml).
+    # Pyrmit has its own gate, /dev-access.
+    private: false
     domains:
       migration.pyrmit-staging.kthais.com:
         port: 3000

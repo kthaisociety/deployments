@@ -30,6 +30,9 @@ defaults:
 
 environments:
   staging:
+    # No staging gate: pyrmit-frontend sends its own Authorization header (a bearer token) to this host,
+    # which the gate's basic auth would reject. Pyrmit has its own gate, /dev-access.
+    private: false
     env:
       CORS_ALLOWED_ORIGINS: https://migration.pyrmit-staging.kthais.com
       APP_ENV: development

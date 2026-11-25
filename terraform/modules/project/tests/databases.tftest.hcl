@@ -2,7 +2,12 @@
 # listed secret name reaching its engine's path, and production's Postgres backed up. Mock providers, as
 # in domains.tftest.hcl.
 
-mock_provider "vault" {}
+# The staging gate's password has a version (staging_gate.tf).
+mock_provider "vault" {
+  mock_data "vault_generic_secret" {
+    defaults = { data_json = "{\"current_version\":1}" }
+  }
+}
 mock_provider "random" {}
 mock_provider "dokploy" {
   mock_resource "dokploy_project" {
