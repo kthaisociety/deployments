@@ -9,6 +9,25 @@ defaults:
     ACCESS_TOKEN_EXPIRE_MINUTES: "30"
     ACCESS_GATE_COOKIE_SECURE: "true"
     ACCESS_GATE_COOKIE_SAMESITE: lax
+    # The chat is the agent over the corpus (schema `corpus` of DATABASE_URL), which owners replace from the Database
+    # tab. Answers and question embeddings (bge-m3, the model the corpus was embedded with) go through OpenRouter on
+    # each user's own key, entered in Settings (stored encrypted with API_KEY_ENCRYPTION_KEY). No shared key.
+    LLM_PROVIDER: openrouter
+    CHAT_MODE: agent
+    RETRIEVAL_BACKEND: local
+    LOCAL_RAG_STORE: neon
+    LOCAL_RAG_MODEL: or-bge-m3
+    # The question is embedded in Swedish (the corpus's language); the default, written out
+    LOCAL_RAG_DENSE_QUERY: sv
+    # Cited PDFs are downloaded from the kommun sites on first use and kept here (volumes below)
+    PDF_CACHE_DIR: /cache/pdf
+    # Owners replace the corpus from the Database tab: the uploaded dump waits here while it is restored, and is
+    # deleted after the swap (0.6 GB for Uppsala, Stockholm, Vallentuna and the laws; 10 GB for the national corpus)
+    CORPUS_UPLOAD_DIR: /uploads/corpus
+    # The size of the Postgres volume: a replace checks the restore fits against it (Postgres can't tell its free
+    # space). Set it to the real size, or a too-large corpus fails halfway instead of being refused at once.
+    # 5: the host has about 5-10 GB free until its storage is sorted out
+    CORPUS_DB_DISK_GB: "5"
 
   # Names only. Values in OpenBao at secret/pyrmit-backend/<environment>.
   secrets:
@@ -24,7 +43,11 @@ defaults:
   # Values in OpenBao at secret/shared/<environment>, which every project can read.
   shared: []
 
-  # pgvector is required: law_chunks and document_chunks store 3072-dimension embeddings.
+  volumes:
+    /cache/pdf: pdf-cache
+    /uploads/corpus: corpus-uploads   # one corpus dump during an upload: 0.6 GB for the reduced corpus
+
+  # pgvector is required: corpus_chunks stores 1024-dimension bge-m3 embeddings (halfvec).
   databases:
     postgres: {image: "pgvector/pgvector:pg17"}
 
